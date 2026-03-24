@@ -1,0 +1,92 @@
+train_videos:
+  - "RAT 2 FR1 10-02-25"
+  - "RAT 4 FR1 10-02-25"
+  - "RAT 4 FR1 10-03-25"
+  - "RAT 6 FR1 10-02-25"
+  - "RAT 6 FR1 10-03-25"
+  - "RAT 8 FR1 10-02-25"
+  - "RAT 8 FR1 10-03-25"
+  - "RAT 11 FR1 10-03-25"
+  - "2025-03-18 12-58-10"
+  - "2025-03-18 12-58-46"
+
+val_videos:
+  - "RAT 11 FR1 10-02-25"
+  - "RAT 2 FR1 10-03-25"
+  - "2025-03-18 14-08-10"
+
+test_videos:
+  - "Camera4_stitched"
+
+
+bodyparts:
+- head
+- nose
+- spine1
+- spine2
+- spine3
+- tailbase
+- tail1
+- tail2
+- tail_tip
+- L_hip
+- L_backpaw
+- R_backpaw
+- L_shoulder
+- R_frontpaw
+- R_shoulder
+- R_hip
+- R_knee
+- L_knee
+- L_frontpaw
+
+
+skeleton:
+- - head
+  - nose
+- - head
+  - spine1
+- - spine1
+  - spine2
+- - spine2
+  - spine3
+- - spine1
+  - L_shoulder
+- - L_shoulder
+  - L_frontpaw
+- - spine3
+  - L_hip
+- - L_hip
+  - L_knee
+- - L_knee
+  - L_backpaw
+- - spine3
+  - tailbase
+- - tailbase
+  - tail1
+- - tail1
+  - tail2
+- - tail2
+  - tail_tip
+- - spine1
+  - R_shoulder
+- - R_shoulder
+  - R_frontpaw
+- - spine3
+  - R_hip
+- - R_hip
+  - R_knee
+- - R_knee
+  - R_backpaw
+
+left_right_symmetry:
+- - L_hip
+  - R_hip
+- - L_knee
+  - R_knee
+- - L_frontpaw
+  - R_frontpaw
+- - L_shoulder
+  - R_shoulder
+- - L_backpaw
+  - R_backpaw

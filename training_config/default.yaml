@@ -1,0 +1,41 @@
+config: config.yaml
+labels_root: input/labeled-data
+frames_root: output/video_frames_for_sam
+masks_root: output/sam2_labels
+output_root: output/hrnet
+roi_cache: output/keypoint_cache/roi_cache.json
+model_config: input/hrnet.yaml
+
+device: cuda:0
+workers: 4
+prefetch_factor: 4
+pin_memory: false
+persistent_workers: true
+preload_images: true
+preload_masks: true
+seed: 42
+
+model_name: hrnet_w32
+
+epochs: 1000
+patience: 50
+lr: 0.001
+weight_decay: 0.0001
+
+labeled_batch_size: 64
+weak_batch_size: 64
+eval_batch_size: 64
+
+input_width: 256
+input_height: 192
+heatmap_width: 64
+heatmap_height: 48
+sigma: 2.0
+
+lambda_kpt: 1.0
+lambda_vis: 0.5
+lambda_mask: 0.5
+lambda_entropy: 0.05
+
+no_amp: false
+dry_run: false
