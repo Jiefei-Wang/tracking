@@ -1626,9 +1626,11 @@ def train_one_epoch(
     if freeze_backbone:
         model.backbone.eval()
     split_ratio = float(model.cfg["model"]["heads"]["bodypart"].get("simcc_split_ratio", 2.0))
-    labeled_iter = cycle_loader(labeled_loader)
-    weak_iter = cycle_loader(weak_loader)
-    steps = max(len(labeled_loader), len(weak_loader) if weak_loader is not None else 0, 1)
+    # Iterate through all labeled batches each epoch. Weak batches are optional and
+    # consumed at most once per epoch to avoid repeating weak supervision.
+    labeled_iter = iter(labeled_loader)
+    weak_iter = iter(weak_loader) if weak_loader is not None else None
+    steps = max(len(labeled_loader), 1)
     totals = {
         "loss": 0.0,
         "supervised": 0.0,
@@ -1644,7 +1646,12 @@ def train_one_epoch(
     for step_idx in range(steps):
         cpu_start = time.perf_counter()
         labeled_batch = next(labeled_iter)
-        weak_batch = next(weak_iter)
+        weak_batch = None
+        if weak_iter is not None:
+            try:
+                weak_batch = next(weak_iter)
+            except StopIteration:
+                weak_batch = None
         cpu_time = time.perf_counter() - cpu_start
 
         optimizer.zero_grad(set_to_none=True)
