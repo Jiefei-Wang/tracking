@@ -68,10 +68,9 @@ python scripts/keypoints/RTMPose.py \
 # Predict
 
 ```bash
-python scripts/keypoints/RTMPose.py \
+python scripts/keypoints/RTMPose_predict.py \
   --score-cutoff 0.2 \
-  --visibility-cutoff 0.5\
-  predict \
+  --visibility-cutoff 0.5 \
   --checkpoint output/RTMPose/no_weak_20260328_174401/checkpoint_best.pt \
   --video test_videos/Camera4_stitched_600_660.mp4
 ```
@@ -81,6 +80,6 @@ python scripts/keypoints/RTMPose.py \
 python scripts/keypoints/RTMPose.py --help
 python scripts/keypoints/RTMPose.py train --help
 python scripts/keypoints/RTMPose.py eval --help
-python scripts/keypoints/RTMPose.py predict --help
 python scripts/keypoints/RTMPose.py debug --help
+python scripts/keypoints/RTMPose_predict.py --help
 ```

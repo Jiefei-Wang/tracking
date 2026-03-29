@@ -27,9 +27,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from modules.detector_ssdlite_model import build_ssdlite_model, load_checkpoint
 from modules.label_csv_utils import load_keypoints
+from modules.rtmpose_predict_common import load_model_from_checkpoint_for_inference
 from modules.rtmpose_model import (
     StandaloneRTMPose,
-    load_rtmpose_checkpoint,
     save_rtmpose_checkpoint,
 )
 
@@ -631,15 +631,6 @@ def with_optional_prefix(base_prefix: str, user_prefix: str) -> str:
     if left:
         return left
     return right
-
-
-def build_predict_output_dir(checkpoint_path: Path, output_root: Path, prefix: str = "") -> Path:
-    if str(prefix or "").strip():
-        return build_run_dir(output_root, str(prefix))
-    checkpoint_path = checkpoint_path.resolve()
-    if checkpoint_path.parent.parent.resolve() == output_root.resolve():
-        return checkpoint_path.parent.parent / f"{checkpoint_path.parent.name}_predict"
-    return output_root / f"predict_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 
 def build_prepare_dir(output_root: Path) -> Path:
@@ -2310,12 +2301,95 @@ def command_train(args: argparse.Namespace) -> int:
 
         selection_metric_name = str(args.selection_metric)
         selection_mode = str(args.selection_mode)
+        patience = int(args.patience)
+        if patience < 1:
+            raise ValueError(f"--patience must be >= 1, got {patience}")
         eval_every_n_epoch = max(int(args.eval_every_n_epoch), 1)
         save_every_n_epoch = max(int(args.save_every_n_epoch), 1)
         max_save = max(int(args.max_save), 0)
         best_metric = float("inf") if selection_mode == "min" else -float("inf")
         best_epoch = 0
+        last_improved_epoch = 0
         history: list[dict[str, Any]] = []
+
+        print("Running pre-training evaluation (epoch 0)")
+        initial_train_eval_metrics = evaluate_pose_model(
+            model,
+            train_eval_loader,
+            device,
+            float(args.lambda_pose),
+            float(args.lambda_mask),
+            float(args.lambda_visibility),
+        )
+        initial_val_metrics = evaluate_pose_model(
+            model,
+            val_loader,
+            device,
+            float(args.lambda_pose),
+            float(args.lambda_mask),
+            float(args.lambda_visibility),
+        )
+        initial_train_loss_eval, initial_train_metric_eval = split_eval_payload(initial_train_eval_metrics)
+        initial_val_loss_eval, initial_val_metric_eval = split_eval_payload(initial_val_metrics)
+        initial_train_metric_value = resolve_selection_score(initial_train_eval_metrics, selection_metric_name)
+        initial_val_metric_value = resolve_selection_score(initial_val_metrics, selection_metric_name)
+        initial_summary = {
+            "epoch": 0,
+            "train": {
+                "loss": float(initial_train_loss_eval["loss"]),
+                "loss_eval": initial_train_loss_eval,
+                "metric_eval": initial_train_metric_eval,
+                "selection_metric_name": selection_metric_name,
+                "selection_metric": initial_train_metric_value,
+                "sampled_labeled_count": 0,
+                "sampled_weak_count": 0,
+                "optimization": {},
+            },
+            "val": {
+                "loss": float(initial_val_loss_eval["loss"]),
+                "loss_eval": initial_val_loss_eval,
+                "metric_eval": initial_val_metric_eval,
+                "selection_metric_name": selection_metric_name,
+                "selection_metric": initial_val_metric_value,
+            },
+            "lr": float(optimizer.param_groups[0]["lr"]),
+            "evaluated": True,
+        }
+        history.append(initial_summary)
+        write_json(run_dir / "history.json", history)
+        best_metric = initial_val_metric_value
+        best_epoch = 0
+        last_improved_epoch = 0
+        best_summary = {
+            "epoch": best_epoch,
+            "selection_metric_name": selection_metric_name,
+            "selection_metric_value": float(best_metric),
+            "selection_mode": selection_mode,
+            "train": initial_summary["train"],
+            "val": initial_summary["val"],
+            "lr": initial_summary["lr"],
+            "checkpoint": "checkpoint_best.pt",
+        }
+        save_rtmpose_checkpoint(
+            run_dir / "checkpoint_best.pt",
+            model,
+            optimizer=optimizer,
+            scaler=scaler,
+            extra_state={
+                "epoch": 0,
+                "history": history,
+                "model_config": make_serializable(model_cfg),
+                "bodyparts": list(project_cfg.bodyparts),
+            },
+        )
+        export_best_epoch_files(run_dir, best_summary)
+        print(
+            "Epoch 000 pretrain_eval "
+            f"train_rmse={initial_train_metric_eval.get('rmse_unfiltered', float('nan')):.4f} "
+            f"train_rmse_90={initial_train_metric_eval.get('rmse_90', float('nan')):.4f} "
+            f"val_rmse={initial_val_metric_eval.get('rmse_unfiltered', float('nan')):.4f} "
+            f"val_rmse_90={initial_val_metric_eval.get('rmse_90', float('nan')):.4f}"
+        )
 
         for epoch in range(1, int(args.epochs) + 1):
             sampled_train_labeled_samples = sample_epoch_train_samples(
@@ -2387,7 +2461,8 @@ def command_train(args: argparse.Namespace) -> int:
                 log_interval=int(args.log_interval),
                 freeze_backbone=bool(args.freeze_backbone),
             )
-            should_eval = (epoch % eval_every_n_epoch) == 0
+            force_eval_for_patience = (epoch - last_improved_epoch) >= patience
+            should_eval = (epoch % eval_every_n_epoch) == 0 or force_eval_for_patience
             train_eval_metrics: dict[str, float] = {}
             train_loss_eval = {"loss": float("nan")}
             train_metric_eval: dict[str, float] = {}
@@ -2492,6 +2567,7 @@ def command_train(args: argparse.Namespace) -> int:
             if should_eval and metric_is_better(val_metric_value, best_metric, selection_mode):
                 best_metric = val_metric_value
                 best_epoch = epoch
+                last_improved_epoch = epoch
                 best_summary = {
                     "epoch": best_epoch,
                     "selection_metric_name": selection_metric_name,
@@ -2515,6 +2591,12 @@ def command_train(args: argparse.Namespace) -> int:
                     },
                 )
                 export_best_epoch_files(run_dir, best_summary)
+            if should_eval and (epoch - last_improved_epoch) >= patience:
+                print(
+                    f"Early stopping at epoch {epoch:03d}: no val improvement in "
+                    f"{patience} epoch(s) since epoch {last_improved_epoch:03d}."
+                )
+                break
             if scheduler is not None:
                 scheduler.step()
 
@@ -2544,32 +2626,13 @@ def load_model_from_checkpoint(
     checkpoint_path: Path,
     device: torch.device,
 ) -> tuple[StandaloneRTMPose, dict[str, Any]]:
-    checkpoint_payload = torch.load(Path(checkpoint_path), map_location="cpu")
-    model_cfg = resolve_model_config(args)
-    if isinstance(checkpoint_payload, Mapping) and isinstance(checkpoint_payload.get("model_config"), Mapping):
-        model_cfg = dict(checkpoint_payload["model_config"])
-    else:
-        resolved_model_config_path = Path(checkpoint_path).parent / "resolved_model_config.yaml"
-        run_model_config_path = Path(checkpoint_path).parent / "model_config.yaml"
-        for candidate in (resolved_model_config_path, run_model_config_path):
-            if candidate.is_file():
-                payload = load_yaml_file(candidate)
-                if isinstance(payload, Mapping) and "model" in payload:
-                    model_cfg = dict(payload)
-                    break
-    model = build_pose_model(
-        model_cfg,
+    return load_model_from_checkpoint_for_inference(
+        checkpoint_path=checkpoint_path,
         device=device,
-        checkpoint_path=None,
-        backbone_checkpoint_path=None,
+        resolve_model_config=lambda: resolve_model_config(args),
+        load_yaml_file=load_yaml_file,
+        build_pose_model=build_pose_model,
     )
-    checkpoint_payload = load_rtmpose_checkpoint(checkpoint_path, model)
-    if isinstance(checkpoint_payload, Mapping) and isinstance(checkpoint_payload.get("model_config"), Mapping):
-        model.cfg = dict(checkpoint_payload["model_config"])
-    else:
-        model.cfg = dict(model_cfg)
-    model.eval()
-    return model, checkpoint_payload
 
 
 def command_eval(args: argparse.Namespace) -> int:
@@ -2644,261 +2707,6 @@ def command_eval(args: argparse.Namespace) -> int:
     write_json(output_dir / "metrics.json", payload)
     write_text(output_dir / "metrics.txt", "\n".join(f"{k}: {v}" for k, v in payload.items()) + "\n")
     print(json.dumps(payload, indent=2))
-    return 0
-
-
-@torch.no_grad()
-def predict_dataset(
-    model: StandaloneRTMPose,
-    dataloader: DataLoader,
-    bodyparts: Sequence[str],
-) -> list[dict[str, Any]]:
-    predictions: list[dict[str, Any]] = []
-    device = next(model.parameters()).device
-    for batch in dataloader:
-        image = batch["image"].to(device)
-        outputs = model(image)
-        points, coord_scores = decode_keypoints_with_predictor(model, outputs)
-        visibility = visibility_probabilities(outputs)
-        points = points.cpu().numpy()
-        coord_scores = coord_scores.cpu().numpy()
-        visibility = visibility.cpu().numpy()
-        crop_boxes = batch["crop_box"].cpu().numpy()
-        orig_sizes = batch["orig_size"].cpu().numpy()
-        for i in range(points.shape[0]):
-            crop_box = crop_boxes[i]
-            crop_w = max(1.0, crop_box[2] - crop_box[0])
-            crop_h = max(1.0, crop_box[3] - crop_box[1])
-            input_w = float(batch["image"].shape[-1])
-            input_h = float(batch["image"].shape[-2])
-            mapped = points[i].copy()
-            mapped[:, 0] = crop_box[0] + mapped[:, 0] * crop_w / input_w
-            mapped[:, 1] = crop_box[1] + mapped[:, 1] * crop_h / input_h
-            predictions.append(
-                {
-                    "video_name": batch["video_name"][i],
-                    "frame_idx": int(batch["frame_idx"][i].item()),
-                    "source_name": batch["source_name"][i],
-                    "image_width": int(orig_sizes[i, 0]),
-                    "image_height": int(orig_sizes[i, 1]),
-                    "crop_box": [float(v) for v in crop_box.tolist()],
-                    "keypoints": {
-                        bodypart: {
-                            "x": float(mapped[kp_idx, 0]),
-                            "y": float(mapped[kp_idx, 1]),
-                            "score": float(coord_scores[i, kp_idx]),
-                            "visibility_score": float(visibility[i, kp_idx]),
-                        }
-                        for kp_idx, bodypart in enumerate(bodyparts)
-                    },
-                }
-            )
-    return predictions
-
-
-def draw_pose_prediction(
-    frame_bgr: np.ndarray,
-    bodyparts: Sequence[str],
-    skeleton: Sequence[Sequence[str]],
-    keypoints_xy: np.ndarray,
-    confidence_scores: np.ndarray,
-    visibility_scores: np.ndarray,
-    roi_box: Sequence[int],
-    expanded_roi_box: Sequence[int],
-    score_cutoff: float,
-    visibility_cutoff: float,
-) -> np.ndarray:
-    canvas = frame_bgr.copy()
-    roi_x1, roi_y1, roi_x2, roi_y2 = [int(round(float(v))) for v in roi_box]
-    exp_x1, exp_y1, exp_x2, exp_y2 = [int(round(float(v))) for v in expanded_roi_box]
-    cv2.rectangle(canvas, (roi_x1, roi_y1), (roi_x2 - 1, roi_y2 - 1), (0, 255, 255), 2)
-    cv2.rectangle(canvas, (exp_x1, exp_y1), (exp_x2 - 1, exp_y2 - 1), (255, 128, 0), 2)
-    name_to_idx = {name: idx for idx, name in enumerate(bodyparts)}
-    for left, right in skeleton:
-        if left not in name_to_idx or right not in name_to_idx:
-            continue
-        li = name_to_idx[left]
-        ri = name_to_idx[right]
-        if (
-            confidence_scores[li] < score_cutoff
-            or confidence_scores[ri] < score_cutoff
-            or visibility_scores[li] < visibility_cutoff
-            or visibility_scores[ri] < visibility_cutoff
-        ):
-            continue
-        p1 = (int(round(keypoints_xy[li, 0])), int(round(keypoints_xy[li, 1])))
-        p2 = (int(round(keypoints_xy[ri, 0])), int(round(keypoints_xy[ri, 1])))
-        cv2.line(canvas, p1, p2, (255, 255, 0), 1, cv2.LINE_AA)
-    for idx, bodypart in enumerate(bodyparts):
-        if confidence_scores[idx] < score_cutoff or visibility_scores[idx] < visibility_cutoff:
-            continue
-        x = int(round(keypoints_xy[idx, 0]))
-        y = int(round(keypoints_xy[idx, 1]))
-        cv2.circle(canvas, (x, y), 3, (0, 255, 0), -1)
-        cv2.putText(canvas, bodypart, (x + 3, y + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1, cv2.LINE_AA)
-    return canvas
-
-
-@torch.no_grad()
-def predict_video_file(
-    args: argparse.Namespace,
-    project_cfg: ProjectConfig,
-    model_cfg: Mapping[str, Any],
-    model: StandaloneRTMPose,
-) -> Path:
-    detector_model_cfg = resolve_detector_model_config(args)
-    detector = SSDLiteDetector(
-        detector_model_cfg,
-        checkpoint_path=args.detector_checkpoint,
-        device=resolve_device(str(args.detector_device or args.device)),
-        score_threshold=float(args.detector_score_threshold),
-        image_mean=detector_model_cfg.get("image_mean", [0.485, 0.456, 0.406]),
-        image_std=detector_model_cfg.get("image_std", [0.229, 0.224, 0.225]),
-    )
-    input_w, input_h = tuple(model_cfg["model"]["heads"]["bodypart"].get("input_size", [256, 256]))
-    cap = cv2.VideoCapture(str(args.video))
-    if not cap.isOpened():
-        raise FileNotFoundError(f"Failed to open video: {args.video}")
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    output_dir = build_predict_output_dir(
-        args.checkpoint,
-        args.output_root,
-        prefix=str(args.prefix or ""),
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / Path(args.video).name
-    writer = cv2.VideoWriter(
-        str(output_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (width, height),
-    )
-    image_mean = np.asarray(model_cfg.get("image_mean", [0.485, 0.456, 0.406]), dtype=np.float32)
-    image_std = np.asarray(model_cfg.get("image_std", [0.229, 0.224, 0.225]), dtype=np.float32)
-    progress = tqdm(total=total_frames if total_frames > 0 else None, desc="predict_video")
-    device = next(model.parameters()).device
-    while True:
-        ok, frame_bgr = cap.read()
-        if not ok:
-            break
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        det_box, _ = detector.detect_single(frame_rgb)
-        if det_box is not None:
-            crop_box = expand_box_xyxy(det_box, frame_rgb.shape[:2], float(args.crop_expand_scale))
-            x1, y1, x2, y2 = crop_box
-            crop = frame_rgb[y1:y2, x1:x2]
-            resized = cv2.resize(crop, (input_w, input_h), interpolation=cv2.INTER_LINEAR)
-            image_float = resized.astype(np.float32) / 255.0
-            image_norm = (image_float - image_mean[None, None, :]) / image_std[None, None, :]
-            tensor = torch.from_numpy(np.ascontiguousarray(image_norm.transpose(2, 0, 1))).unsqueeze(0).to(device)
-            outputs = model(tensor)
-            points, coord_scores = decode_keypoints_with_predictor(model, outputs)
-            visibility = visibility_probabilities(outputs)
-            points = points[0].cpu().numpy()
-            confidence_scores = coord_scores[0].cpu().numpy()
-            visibility_scores = visibility[0].cpu().numpy()
-            crop_w = max(1.0, x2 - x1)
-            crop_h = max(1.0, y2 - y1)
-            points[:, 0] = x1 + points[:, 0] * crop_w / float(input_w)
-            points[:, 1] = y1 + points[:, 1] * crop_h / float(input_h)
-            frame_bgr = draw_pose_prediction(
-                frame_bgr,
-                project_cfg.bodyparts,
-                project_cfg.skeleton,
-                points,
-                confidence_scores,
-                visibility_scores,
-                det_box,
-                crop_box,
-                float(args.score_cutoff),
-                float(args.visibility_cutoff),
-            )
-        writer.write(frame_bgr)
-        progress.update(1)
-    progress.close()
-    writer.release()
-    cap.release()
-    print(f"Wrote annotated video to {output_path}")
-    return output_path
-
-
-def command_predict(args: argparse.Namespace) -> int:
-    device = resolve_device(args.device)
-    project_cfg = load_project_config(args.project_config)
-    use_masks = float(getattr(args, "weak_sample_weight", 1.0)) > 0.0
-    model, _ = load_model_from_checkpoint(args, args.checkpoint, device)
-    model_cfg = dict(model.cfg)
-    if args.video is not None:
-        if not args.video.is_file():
-            raise FileNotFoundError(
-                f"--video was provided, but file does not exist: {args.video}. "
-                "Pass a valid video path or omit --video to run dataset prediction mode."
-            )
-        predict_video_file(args, project_cfg, model_cfg, model)
-        return 0
-
-    use_masks = float(getattr(args, "weak_sample_weight", 1.0)) > 0.0
-    split_indices = build_all_split_indices(
-        project_cfg,
-        args.labels_root,
-        args.labeled_frames_root,
-        args.frames_root,
-        args.masks_root,
-        include_weak=use_masks,
-        require_masks=use_masks,
-        auto_val_fraction=float(args.auto_val_fraction),
-        split_seed=int(args.seed),
-    )
-    validate_mutual_exclusion(split_indices)
-    store, detector_boxes, filtered_indices, detector_stats = prepare_training_components(args, model_cfg, split_indices)
-    del detector_stats
-    samples = select_samples_for_split(filtered_indices, args.split, args.video_name)
-    data_train_cfg = dict(model_cfg.get("data", {}).get("train", {}))
-    bbox_margin = float(model_cfg.get("data", {}).get("bbox_margin", getattr(args, "bbox_margin", 20.0)))
-    crop_cfg = dict(data_train_cfg.get("top_down_crop", {}))
-    crop_cfg.setdefault("margin", int(getattr(args, "top_down_margin", 0)))
-    crop_cfg.setdefault("crop_with_context", bool(getattr(args, "top_down_crop_with_context", True)))
-    dataset = RTMPoseDataset(
-        samples,
-        store,
-        detector_boxes,
-        project_cfg.bodyparts,
-        project_cfg.skeleton,
-        project_cfg.left_right_symmetry,
-        tuple(model_cfg["model"]["heads"]["bodypart"].get("input_size", [256, 256])),
-        model_cfg.get("image_mean", [0.485, 0.456, 0.406]),
-        model_cfg.get("image_std", [0.229, 0.224, 0.225]),
-        float(args.crop_expand_scale),
-        bbox_margin=bbox_margin,
-        train_aug_cfg=data_train_cfg,
-        crop_cfg=crop_cfg,
-        train_mode=False,
-        include_weak=False,
-        use_masks=use_masks,
-    )
-    loader = build_dataloader(
-        dataset,
-        batch_size=int(args.eval_batch_size),
-        shuffle=False,
-        drop_last=False,
-        workers=int(args.workers),
-        pin_memory=bool(args.pin_memory),
-        persistent_workers=bool(args.persistent_workers),
-        prefetch_factor=int(args.prefetch_factor) if int(args.workers) > 0 else None,
-    )
-    predictions = predict_dataset(model, loader, project_cfg.bodyparts)
-    output_dir = build_predict_output_dir(
-        args.checkpoint,
-        args.output_root,
-        prefix=str(args.prefix or ""),
-    )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "predictions.json"
-    write_json(output_path, predictions)
-    print(f"Wrote predictions to {output_path}")
     return 0
 
 
@@ -3072,6 +2880,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--scheduler-gamma", type=float, default=0.5)
     train_parser.add_argument("--selection-metric", type=str, default="rmse_unfiltered")
     train_parser.add_argument("--selection-mode", type=str, choices=("min", "max"), default="min")
+    train_parser.add_argument("--patience", type=int, default=50)
     train_parser.add_argument("--lambda-pose", type=float, default=1.0)
     train_parser.add_argument("--lambda-mask", type=float, default=0.5)
     train_parser.add_argument("--lambda-visibility", type=float, default=1.0)
@@ -3089,14 +2898,6 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--lambda-pose", type=float, default=1.0)
     eval_parser.add_argument("--lambda-mask", type=float, default=0.5)
     eval_parser.add_argument("--lambda-visibility", type=float, default=1.0)
-
-    predict_parser = subparsers.add_parser("predict")
-    predict_parser.add_argument("--checkpoint", type=Path, required=True)
-    predict_parser.add_argument("--prefix", default="")
-    predict_parser.add_argument("--split", choices=SPLIT_NAMES, default="test")
-    predict_parser.add_argument("--video-name", type=str, default=None)
-    predict_parser.add_argument("--video", type=Path, default=None)
-    predict_parser.add_argument("--eval-batch-size", type=int, default=16)
 
     debug_parser = subparsers.add_parser("debug")
     debug_parser.add_argument("--split", choices=SPLIT_NAMES, default="train")
@@ -3116,8 +2917,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return command_prepare(args)
     if args.command == "eval":
         return command_eval(args)
-    if args.command == "predict":
-        return command_predict(args)
     if args.command == "debug":
         return command_debug(args)
     parser.error(f"Unhandled command: {args.command}")

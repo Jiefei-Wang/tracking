@@ -1,4 +1,5 @@
 weak_sample_weight: 0.5
+eval_every_n_epoch: 1
 training:
   train_labeled_samples_per_epoch: 0
   train_weak_samples_per_epoch: 0
