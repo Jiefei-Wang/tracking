@@ -1,0 +1,62 @@
+labels_root: input/labeled-data
+labeled_frames_root: output/sam2/DLC_frames
+frames_root: output/sam2/final
+masks_root: output/sam2/sam2_pickle_filtered
+output_root: output/RTMPose
+detector_model_name: default
+detector_checkpoint: output/ssdlite/weak_20260326_090250/checkpoint_best.pt
+detector_score_threshold: 0.5
+detector_device: cuda:0
+detector_batch_size: 16
+pretrained_backbone_checkpoint: input/DeepLabCutModelZoo-SuperAnimal-Quadruped/superanimal_quadruped_rtmpose_s.pt
+pretrain_load_mode: auto
+pretrain_expected_size: s
+preload_images: true
+preload_masks: true
+pin_memory: false
+persistent_workers: true
+workers: 4
+prefetch_factor: 4
+seed: 42
+crop_expand_scale: 0.15
+bbox_margin: 20.0
+top_down_margin: 0
+top_down_crop_with_context: true
+score_cutoff: 0.0
+visibility_cutoff: 0.5
+weak_sample_weight: 1.0
+save_every_n_epoch: 5
+eval_every_n_epoch: 5
+max_save: 5
+
+training:
+  prefix: ""
+  device: cuda:0
+  epochs: 500
+  labeled_batch_size: 16
+  weak_batch_size: 16
+  train_labeled_samples_per_epoch: 0
+  train_weak_samples_per_epoch: 0
+  eval_batch_size: 16
+  optimizer: AdamW
+  lr: 0.0001
+  weight_decay: 0.0001
+  scheduler: cosine
+  scheduler_step_size: 10
+  scheduler_gamma: 0.5
+  selection_metric: rmse_unfiltered
+  selection_mode: min
+  lambda_pose: 1.0
+  lambda_mask: 0.5
+  lambda_visibility: 1.0
+  lambda_entropy: 0.05
+  freeze_backbone: false
+  amp: true
+  log_interval: 10
+
+inference:
+  device: cuda:0
+  eval_batch_size: 16
+  lambda_pose: 1.0
+  lambda_mask: 0.5
+  lambda_visibility: 1.0

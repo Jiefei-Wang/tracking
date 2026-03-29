@@ -1,0 +1,7 @@
+input/**/*.pt
+input/**/*.pth
+input/**/*.Identifier
+output/**
+videos/**
+test_videos/**
+*.pyc
