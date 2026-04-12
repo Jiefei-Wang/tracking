@@ -34,6 +34,44 @@ def load_video_labels(csv_path: Path) -> pd.DataFrame:
     return load_keypoints(csv_path)
 
 
+def load_label_json(label_json_path: Path) -> pd.DataFrame:
+    payload = json.loads(Path(label_json_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError(f"Expected {label_json_path} to contain a list, got {type(payload).__name__}")
+
+    rows = []
+    for item in payload:
+        frame_idx = int(item["frame_idx"])
+        row = {"frame": frame_idx}
+        labels = item.get("labels") or {}
+        for keypoint, value in labels.items():
+            visible = int(value[0]) if value else 0
+            x = value[1] if len(value) > 1 else None
+            y = value[2] if len(value) > 2 else None
+            row[f"{keypoint}_x"] = float(x) if visible and x is not None else np.nan
+            row[f"{keypoint}_y"] = float(y) if visible and y is not None else np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def build_label_json_payload(label_df: pd.DataFrame, keypoints: list[str]) -> list[dict]:
+    payload = []
+    for _, row in label_df.iterrows():
+        frame_idx = int(float(row["frame"]))
+        labels = {}
+        for keypoint in keypoints:
+            x_col = f"{keypoint}_x"
+            y_col = f"{keypoint}_y"
+            x_val = pd.to_numeric(pd.Series([row.get(x_col)]), errors="coerce").iloc[0]
+            y_val = pd.to_numeric(pd.Series([row.get(y_col)]), errors="coerce").iloc[0]
+            if pd.isna(x_val) or pd.isna(y_val):
+                labels[keypoint] = [0, None, None]
+            else:
+                labels[keypoint] = [1, int(round(float(x_val))), int(round(float(y_val)))]
+        payload.append({"frame_idx": frame_idx, "labels": labels})
+    return payload
+
+
 def list_keypoints(prediction_map: dict[int, dict], label_df: pd.DataFrame) -> list[str]:
     prediction_keypoints: set[str] = set()
     for item in prediction_map.values():
@@ -130,6 +168,18 @@ def get_video_pairs(prediction_root: Path, labels_root: Path) -> list[str]:
         video_name = prediction_path.stem
         csv_path = labels_root / video_name / "CollectedData_rats.csv"
         if csv_path.is_file():
+            video_names.append(video_name)
+    return video_names
+
+
+def get_label_json_video_pairs(prediction_root: Path, label_json_root: Path) -> list[str]:
+    prediction_root = Path(prediction_root)
+    label_json_root = Path(label_json_root)
+    video_names = []
+    for prediction_path in sorted(prediction_root.glob("*.json")):
+        video_name = prediction_path.stem
+        label_path = label_json_root / f"{video_name}.json"
+        if label_path.is_file():
             video_names.append(video_name)
     return video_names
 
