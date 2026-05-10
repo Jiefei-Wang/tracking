@@ -195,7 +195,7 @@ def build_ui() -> None:
                 video_options = {ALL_VIDEOS: "All videos", **{name: name for name in video_names}}
                 video_select = ui.select(video_options, value=ALL_VIDEOS, label="Video").classes("w-full")
                 keypoint_select = ui.select({ALL_KEYPOINTS: "All keypoints"}, value=ALL_KEYPOINTS, label="Keypoint").classes("w-full")
-                cutoff_input = ui.number("Cutoff", value=20.0, step=1.0, min=0.0).classes("w-full")
+                cutoff_input = ui.number("Cutoff", value=0.0, step=1.0, min=0.0).classes("w-full") # CHANGE VALUE BACK TO 20.0
                 counter_label = ui.label("0 / 0").classes("text-subtitle2")
                 video_info_label = ui.label("Video: n/a").classes("text-body2")
                 frame_info_label = ui.label("Frame: n/a | Label: n/a").classes("text-body2")
@@ -463,7 +463,8 @@ def build_ui() -> None:
         frame_info_label.set_text(f"Frame: {frame_idx} | Label: {label_text}")
         keypoint_info_label.set_text(f"Flagged keypoint: {flagged_keypoint} | Current: {edit_keypoint}")
         distance_label.set_text(f"Distance: {distance_text}")
-        message_label.set_text("")
+        message_label.set_text(f"Path: {image_path}")  # CHANGE TO BLANK 
+
 
     def refresh_frames(reset_index: bool, preferred_item: tuple[str, int, str] | None = None) -> None:
         old_item = preferred_item
@@ -511,7 +512,7 @@ def build_ui() -> None:
         mark_frame_dirty(video_name, frame_idx)
         current = get_current_item()
         preferred_keypoint = current[2] if current is not None and current[0] == video_name and current[1] == frame_idx else keypoint
-        refresh_frames(reset_index=False, preferred_item=(video_name, frame_idx, preferred_keypoint))
+        refresh_image()# refresh_frames(reset_index=False, preferred_item=(video_name, frame_idx, preferred_keypoint))
 
     def apply_remove(video_name: str, frame_idx: int, keypoint: str) -> None:
         label_df = state.working_by_video[video_name]
@@ -519,7 +520,7 @@ def build_ui() -> None:
         mark_frame_dirty(video_name, frame_idx)
         current = get_current_item()
         preferred_keypoint = current[2] if current is not None and current[0] == video_name and current[1] == frame_idx else keypoint
-        refresh_frames(reset_index=False, preferred_item=(video_name, frame_idx, preferred_keypoint))
+        refresh_image()# refresh_frames(reset_index=False, preferred_item=(video_name, frame_idx, preferred_keypoint))
 
     def commit_drag_if_needed() -> None:
         if not state.dragging:
@@ -579,7 +580,7 @@ def build_ui() -> None:
             state.changed_by_video[video_name].clear()
 
         update_save_button_text()
-        refresh_frames(reset_index=False)
+        # refresh_frames(reset_index=False)
         if notify:
             ui.notify(f"Saved {len(target_videos)} json files ({total_frames} frames).")
 
@@ -854,7 +855,7 @@ def build_ui() -> None:
     show_all_keypoints_checkbox.on_value_change(handle_show_all_keypoints_change)
     show_prediction_checkbox.on_value_change(handle_show_prediction_change)
     show_label_text_checkbox.on_value_change(handle_show_label_text_change)
-    cutoff_input.on_value_change(handle_cutoff_change)
+    cutoff_input.on_value_change(handle_cutoff_change)  #UNCOMMENT WHEN DONE 
     ui.keyboard(on_key=handle_keyboard, active=True, repeating=True)
 
     refresh_keypoint_options()
@@ -871,7 +872,7 @@ def main() -> None:
     ui.run(
         title="Manual Correction",
         reload=False,
-        host="0.0.0.0",
+        host="localhost",# host="0.0.0.0",
         port=1234,
         uvicorn_logging_level="info",
         access_log=True,
