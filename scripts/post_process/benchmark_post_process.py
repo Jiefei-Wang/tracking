@@ -43,7 +43,7 @@ def _load_rtmpose_module() -> ModuleType:
 
 rtm = _load_rtmpose_module()
 
-from modules.rtmpose_predict_common import (  # noqa: E402
+from modules.keypoint_rtmpose_predict_common import (  # noqa: E402
     load_model_from_checkpoint_for_inference,
     predict_dataset,
 )
@@ -274,9 +274,6 @@ def _predict_split(
     predictions = predict_dataset(
         model=model,
         dataloader=dataloader,
-        bodyparts=project_cfg.bodyparts,
-        decode_keypoints_with_predictor=rtm.decode_keypoints_with_predictor,
-        visibility_probabilities=rtm.visibility_probabilities,
     )
     metric_eval_crop_space = rtm.evaluate_pose_model(
         model,
@@ -421,14 +418,10 @@ def _predict_dense_context_for_split(
         preload_images=bool(runtime_args.preload_images),
         preload_masks=False,
     )
-    detector_model_cfg = rtm.resolve_detector_model_config(runtime_args)
-    detector = rtm.SSDLiteDetector(
-        model_cfg=detector_model_cfg,
-        checkpoint_path=runtime_args.detector_checkpoint,
+    detector = rtm.load_detector(
+        runtime_args.detector_checkpoint.parent,
+        runtime_args.detector_checkpoint,
         device=rtm.resolve_device(str(runtime_args.detector_device or runtime_args.device)),
-        score_threshold=float(runtime_args.detector_score_threshold),
-        image_mean=detector_model_cfg.get("image_mean", [0.485, 0.456, 0.406]),
-        image_std=detector_model_cfg.get("image_std", [0.229, 0.224, 0.225]),
     )
     detector_boxes = rtm.prepare_detector_boxes(
         detector,
@@ -436,6 +429,7 @@ def _predict_dense_context_for_split(
         context_samples,
         detector_batch_desc=f"context_detector_{split_payload.split_name}",
         batch_size=int(runtime_args.detector_batch_size),
+        score_threshold=float(runtime_args.detector_score_threshold),
     )
     context_samples = [
         sample
@@ -483,9 +477,6 @@ def _predict_dense_context_for_split(
     predictions = predict_dataset(
         model=model,
         dataloader=dataloader,
-        bodyparts=project_cfg.bodyparts,
-        decode_keypoints_with_predictor=rtm.decode_keypoints_with_predictor,
-        visibility_probabilities=rtm.visibility_probabilities,
     )
 
     bodyparts = list(project_cfg.bodyparts)
@@ -1827,11 +1818,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     store, detector_boxes, filtered_indices, detector_stats = rtm.prepare_training_components(runtime_args, model_cfg, split_indices)
 
     model, _ = load_model_from_checkpoint_for_inference(
-        checkpoint_path=runtime_args.checkpoint,
+        model_path=runtime_args.checkpoint.parent,
+        checkpoint=runtime_args.checkpoint,
         device=device,
-        resolve_model_config=lambda: _resolve_model_cfg(runtime_args),
-        load_yaml_file=rtm.load_yaml_file,
-        build_pose_model=rtm.build_pose_model,
     )
 
     train_data = _predict_split(

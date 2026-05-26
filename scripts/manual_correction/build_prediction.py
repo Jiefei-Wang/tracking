@@ -1,3 +1,4 @@
+# This script generates pose predictions for specific frames based on label JSON files, using a trained RTMPose model and its associated detector. It reads the requested frame indices from the label files, runs the detector and pose model on the corresponding images, and saves the predictions in a structured JSON format for later review and manual correction if needed.
 from __future__ import annotations
 
 import argparse
@@ -11,34 +12,36 @@ import torch
 import yaml
 from tqdm.auto import tqdm
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent.parent
+# Resolve project path
+if "__file__" in globals():
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    PROJECT_ROOT = SCRIPT_DIR.parent.parent
+else:
+    PROJECT_ROOT = Path.cwd()
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 keypoints_dir = PROJECT_ROOT / "scripts" / "keypoints"
 if str(keypoints_dir) not in sys.path:
     sys.path.insert(0, str(keypoints_dir))
 
-from RTMPose import (
-    SSDLiteDetector,
-    build_pose_model,
+from scripts.keypoints.RTMPose import expand_box_xyxy, resolve_device
+from modules.detector_ssdlite_model import load_detector
+from modules.keypoint_rtmpose_predict_common import (
     decode_keypoints_with_predictor,
-    expand_box_xyxy,
+    load_model_from_checkpoint_for_inference,
     load_yaml_file,
-    resolve_detector_model_config,
-    resolve_device,
     simcc_probabilities,
     visibility_probabilities,
 )
-from modules.rtmpose_predict_common import load_model_from_checkpoint_for_inference
 
 
 # Inputs
 model_dir = PROJECT_ROOT / "output" / "RTMPose" / "no_weak_20260328_174401"
-checkpoint_path = None  # Set this instead of model_dir if needed.
+checkpoint_path = None  # Default to the best checkpoint
 label_dir = PROJECT_ROOT / "input" / "labels"
-frames_root = PROJECT_ROOT / "output" / "labeled_frames"
-output_root = None  # Defaults to output/predicted_frames/<model name>.
+frames_root = PROJECT_ROOT / "output" / "extracted_frames"
+output_root = PROJECT_ROOT / "output" / "predicted_frames"
 label_names = None  # Example: ["ai1.json"]
 batch_size = 8
 device = None  # Defaults to the training run's inference/training device.
@@ -94,13 +97,10 @@ if not checkpoint_path.is_file():
 
 run_config_path = model_dir / "run_config.yaml"
 project_config_path = model_dir / "project_config.yaml"
-resolved_model_config_path = model_dir / "resolved_model_config.yaml"
 if not run_config_path.is_file():
     raise FileNotFoundError(f"Missing run config: {run_config_path}")
 if not project_config_path.is_file():
     raise FileNotFoundError(f"Missing project config: {project_config_path}")
-if not resolved_model_config_path.is_file():
-    raise FileNotFoundError(f"Missing resolved model config: {resolved_model_config_path}")
 
 run_bundle = yaml.safe_load(run_config_path.read_text(encoding="utf-8")) or {}
 run_args = dict(run_bundle.get("args") or {})
@@ -115,29 +115,17 @@ device_obj = resolve_device(device_name)
 detector_device_obj = resolve_device(detector_device_name)
 
 model, _ = load_model_from_checkpoint_for_inference(
-    checkpoint_path=checkpoint_path,
+    model_path=model_dir,
+    checkpoint=checkpoint_path,
     device=device_obj,
-    resolve_model_config=lambda: load_yaml_file(resolved_model_config_path),
-    load_yaml_file=load_yaml_file,
-    build_pose_model=build_pose_model,
 )
 model_cfg = dict(model.cfg)
 
-detector_args = argparse.Namespace(
-    detector_checkpoint=to_repo_path(run_args.get("detector_checkpoint")),
-    detector_model_name=str(run_args.get("detector_model_name", run_cfg.get("detector_model_name", "default"))),
-)
+detector_args = argparse.Namespace(detector_checkpoint=to_repo_path(run_args.get("detector_checkpoint")))
 if detector_args.detector_checkpoint is None or not detector_args.detector_checkpoint.is_file():
     raise FileNotFoundError(f"Missing detector checkpoint: {detector_args.detector_checkpoint}")
-detector_model_cfg = resolve_detector_model_config(detector_args)
-detector = SSDLiteDetector(
-    detector_model_cfg,
-    checkpoint_path=detector_args.detector_checkpoint,
-    device=detector_device_obj,
-    score_threshold=float(run_args.get("detector_score_threshold", run_cfg.get("detector_score_threshold", 0.5))),
-    image_mean=detector_model_cfg.get("image_mean", [0.485, 0.456, 0.406]),
-    image_std=detector_model_cfg.get("image_std", [0.229, 0.224, 0.225]),
-)
+detector = load_detector(detector_args.detector_checkpoint.parent, detector_args.detector_checkpoint, device=detector_device_obj)
+detector_score_threshold = float(run_args.get("detector_score_threshold", run_cfg.get("detector_score_threshold", 0.5)))
 
 input_w, input_h = [int(v) for v in model_cfg["model"]["heads"]["bodypart"].get("input_size", [256, 256])]
 crop_expand_scale = float(run_args.get("crop_expand_scale", run_cfg.get("crop_expand_scale", 0.15)))
@@ -206,7 +194,7 @@ for label_path in label_paths:
             continue
 
         images_rgb = [item["image_rgb"] for item in batch_items]
-        detections = detector.detect_batch(images_rgb)
+        detections = detector.detect_batch(images_rgb, score_threshold=detector_score_threshold)
         pose_tensors = []
         pose_meta = []
         for item, (det_box, det_score) in zip(batch_items, detections):

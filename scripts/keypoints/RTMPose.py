@@ -25,10 +25,17 @@ from tqdm import tqdm
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
-from modules.detector_ssdlite_model import build_ssdlite_model, load_checkpoint
+from modules.detector_ssdlite_model import SSDLiteDetector, build_ssdlite_model, load_checkpoint, load_detector
 from modules.label_csv_utils import load_keypoints
-from modules.rtmpose_predict_common import load_model_from_checkpoint_for_inference
-from modules.rtmpose_model import (
+from modules.keypoint_rtmpose_predict_common import load_model_from_checkpoint_for_inference
+from modules.keypoint_rtmpose_predict_common import (
+    build_pose_model,
+    decode_keypoints_with_predictor,
+    resolve_detector_model_config,
+    simcc_probabilities,
+    visibility_probabilities,
+)
+from modules.keypoint_rtmpose_model import (
     StandaloneRTMPose,
     save_rtmpose_checkpoint,
 )
@@ -193,27 +200,6 @@ def export_config_bundle(
             "args": make_serializable(dict(resolved_run_args)),
         },
     )
-
-
-def resolve_detector_model_config(args: argparse.Namespace) -> dict[str, Any]:
-    checkpoint_path = Path(args.detector_checkpoint)
-    detector_run_dir = checkpoint_path.parent
-    model_config_path = detector_run_dir / "model_config.yaml"
-    if not model_config_path.is_file():
-        raise FileNotFoundError(
-            f"Expected detector model config at {model_config_path}. "
-            "RTMPose now requires detector checkpoints from self-contained SSDLite run folders."
-        )
-    detector_model_registry = load_yaml_file(model_config_path)
-    detector_model_name = str(args.detector_model_name)
-    if detector_model_name not in detector_model_registry:
-        raise ValueError(
-            f"Unknown detector model name {detector_model_name!r} in {model_config_path}"
-        )
-    detector_model_cfg = detector_model_registry[detector_model_name]
-    if not isinstance(detector_model_cfg, Mapping):
-        raise ValueError(f"Detector model config {detector_model_name!r} in {model_config_path} is invalid")
-    return dict(detector_model_cfg)
 
 
 def deep_merge_dicts(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -1095,64 +1081,6 @@ class RamImageMaskStore:
         }
 
 
-class SSDLiteDetector:
-    def __init__(
-        self,
-        model_cfg: Mapping[str, Any],
-        checkpoint_path: Path,
-        device: torch.device,
-        score_threshold: float,
-        image_mean: Sequence[float],
-        image_std: Sequence[float],
-    ) -> None:
-        self.model = build_ssdlite_model(dict(model_cfg))
-        load_checkpoint(self.model, checkpoint_path, device="cpu", strict=True)
-        self.model.to(device)
-        self.model.eval()
-        self.device = device
-        self.score_threshold = float(score_threshold)
-        self.image_mean = [float(v) for v in image_mean]
-        self.image_std = [float(v) for v in image_std]
-
-    @torch.no_grad()
-    def detect_single(self, image_rgb: np.ndarray) -> tuple[Optional[list[float]], float]:
-        tensor = torch.from_numpy(image_rgb.astype(np.float32).transpose(2, 0, 1) / 255.0).to(self.device)
-        outputs = self.model([tensor])[0]
-        if outputs["boxes"].numel() == 0:
-            return None, 0.0
-        scores = outputs["scores"].detach().cpu().numpy()
-        keep = scores >= self.score_threshold
-        if not keep.any():
-            return None, 0.0
-        boxes = outputs["boxes"].detach().cpu().numpy()[keep]
-        score_vals = scores[keep]
-        best_idx = int(score_vals.argmax())
-        return boxes[best_idx].astype(float).tolist(), float(score_vals[best_idx])
-
-    @torch.no_grad()
-    def detect_batch(self, images_rgb: Sequence[np.ndarray]) -> list[tuple[Optional[list[float]], float]]:
-        tensors = [
-            torch.from_numpy(image_rgb.astype(np.float32).transpose(2, 0, 1) / 255.0).to(self.device)
-            for image_rgb in images_rgb
-        ]
-        outputs = self.model(list(tensors))
-        results: list[tuple[Optional[list[float]], float]] = []
-        for output in outputs:
-            if output["boxes"].numel() == 0:
-                results.append((None, 0.0))
-                continue
-            scores = output["scores"].detach().cpu().numpy()
-            keep = scores >= self.score_threshold
-            if not keep.any():
-                results.append((None, 0.0))
-                continue
-            boxes = output["boxes"].detach().cpu().numpy()[keep]
-            score_vals = scores[keep]
-            best_idx = int(score_vals.argmax())
-            results.append((boxes[best_idx].astype(float).tolist(), float(score_vals[best_idx])))
-        return results
-
-
 def expand_box_xyxy(box: Sequence[float], image_shape: Sequence[int], scale: float) -> tuple[int, int, int, int]:
     h, w = int(image_shape[0]), int(image_shape[1])
     x1, y1, x2, y2 = [float(v) for v in box]
@@ -1176,6 +1104,7 @@ def prepare_detector_boxes(
     samples: Sequence[object],
     detector_batch_desc: str,
     batch_size: int,
+    score_threshold: float,
 ) -> dict[tuple[str, int], dict[str, Any]]:
     box_map: dict[tuple[str, int], dict[str, Any]] = {}
     unique_samples: list[object] = []
@@ -1191,7 +1120,7 @@ def prepare_detector_boxes(
     for start in range(0, len(unique_samples), batch_size):
         chunk = unique_samples[start:start + batch_size]
         images = [store.load_image(sample.image_path) for sample in chunk]
-        results = detector.detect_batch(images)
+        results = detector.detect_batch(images, score_threshold=score_threshold)
         for sample, (box, score) in zip(chunk, results):
             if box is None:
                 continue
@@ -1511,12 +1440,6 @@ def build_dataloader(
     return DataLoader(**kwargs)
 
 
-def simcc_probabilities(outputs: Mapping[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-    probs_x = F.softmax(outputs["x"], dim=-1)
-    probs_y = F.softmax(outputs["y"], dim=-1)
-    return probs_x, probs_y
-
-
 def expected_keypoints_from_outputs(outputs: Mapping[str, torch.Tensor], split_ratio: float) -> tuple[torch.Tensor, torch.Tensor]:
     probs_x, probs_y = simcc_probabilities(outputs)
     x_axis = torch.arange(probs_x.shape[-1], device=probs_x.device, dtype=probs_x.dtype)
@@ -1525,26 +1448,6 @@ def expected_keypoints_from_outputs(outputs: Mapping[str, torch.Tensor], split_r
     exp_y = (probs_y * y_axis[None, None, :]).sum(dim=-1) / float(split_ratio)
     scores = torch.sqrt(probs_x.max(dim=-1).values * probs_y.max(dim=-1).values).clamp_min(0.0)
     return torch.stack([exp_x, exp_y], dim=-1), scores
-
-
-def visibility_probabilities(outputs: Mapping[str, torch.Tensor]) -> torch.Tensor:
-    return torch.sigmoid(outputs["visibility_logits"])
-
-
-def decode_keypoints_with_predictor(
-    model: StandaloneRTMPose,
-    outputs: Mapping[str, torch.Tensor],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    pred = model.head.predictor(model.output_stride, dict(outputs))
-    poses = pred["poses"]
-    if poses.ndim == 4 and poses.shape[1] == 1:
-        poses = poses[:, 0]
-    points = poses[..., :2]
-    if poses.shape[-1] >= 3:
-        scores = poses[..., 2]
-    else:
-        scores = torch.ones_like(points[..., 0])
-    return points, scores
 
 
 def expected_points_mask_loss(
@@ -1739,21 +1642,6 @@ def visibility_loss(
     target = keypoints[..., 2].float().clamp(0.0, 1.0)
     logits = outputs["visibility_logits"]
     return F.binary_cross_entropy_with_logits(logits, target)
-
-
-def build_pose_model(
-    model_cfg: Mapping[str, Any],
-    device: torch.device,
-    checkpoint_path: Path | None = None,
-    backbone_checkpoint_path: Path | None = None,
-) -> StandaloneRTMPose:
-    model = StandaloneRTMPose.from_pretrained(
-        dict(model_cfg),
-        device=device,
-        full_checkpoint_path=checkpoint_path,
-        backbone_checkpoint_path=backbone_checkpoint_path,
-    )
-    return model
 
 
 def configure_backbone_freeze(model: StandaloneRTMPose, freeze_backbone: bool) -> None:
@@ -2285,22 +2173,15 @@ def prepare_training_components(
     if float(getattr(args, "weak_sample_weight", 1.0)) > 0.0:
         weak_samples_for_detector.extend(split_indices["train"].weak_samples)
     if weak_samples_for_detector:
-        detector_model_cfg = resolve_detector_model_config(args)
         detector_device = resolve_device(str(args.detector_device or args.device))
-        detector = SSDLiteDetector(
-            model_cfg=detector_model_cfg,
-            checkpoint_path=args.detector_checkpoint,
-            device=detector_device,
-            score_threshold=float(args.detector_score_threshold),
-            image_mean=detector_model_cfg.get("image_mean", [0.485, 0.456, 0.406]),
-            image_std=detector_model_cfg.get("image_std", [0.229, 0.224, 0.225]),
-        )
+        detector = load_detector(args.detector_checkpoint.parent, args.detector_checkpoint, device=detector_device)
         detector_boxes = prepare_detector_boxes(
             detector,
             store,
             weak_samples_for_detector,
             detector_batch_desc="detector_rois",
             batch_size=int(args.detector_batch_size),
+            score_threshold=float(args.detector_score_threshold),
         )
     filtered_split_indices = filter_samples_with_detector_boxes(
         split_indices,
@@ -3013,21 +2894,6 @@ def command_train(args: argparse.Namespace) -> int:
         sys.stderr = original_stderr
         console_log.close()
 
-
-def load_model_from_checkpoint(
-    args: argparse.Namespace,
-    checkpoint_path: Path,
-    device: torch.device,
-) -> tuple[StandaloneRTMPose, dict[str, Any]]:
-    return load_model_from_checkpoint_for_inference(
-        checkpoint_path=checkpoint_path,
-        device=device,
-        resolve_model_config=lambda: resolve_model_config(args),
-        load_yaml_file=load_yaml_file,
-        build_pose_model=build_pose_model,
-    )
-
-
 def command_eval(args: argparse.Namespace) -> int:
     device = resolve_device(args.device)
     model_cfg = resolve_model_config(args)
@@ -3083,7 +2949,11 @@ def command_eval(args: argparse.Namespace) -> int:
         persistent_workers=bool(args.persistent_workers),
         prefetch_factor=int(args.prefetch_factor) if int(args.workers) > 0 else None,
     )
-    model, _ = load_model_from_checkpoint(args, args.checkpoint, device)
+    model, _ = load_model_from_checkpoint_for_inference(
+        model_path=args.checkpoint.parent,
+        checkpoint=args.checkpoint,
+        device=device,
+    )
     metrics = evaluate_pose_model(
         model,
         loader,

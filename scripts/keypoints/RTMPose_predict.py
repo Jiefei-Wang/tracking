@@ -14,12 +14,15 @@ from tqdm import tqdm
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
-from modules.rtmpose_predict_common import (
+from modules.keypoint_rtmpose_predict_common import (
     build_predict_output_dir,
+    decode_keypoints_with_predictor,
     draw_pose_prediction,
     load_model_from_checkpoint_for_inference,
     predict_dataset,
+    visibility_probabilities,
 )
+from modules.detector_ssdlite_model import load_detector
 from RTMPose import (
     DEFAULT_MODEL_CONFIG,
     DEFAULT_OUTPUT_ROOT,
@@ -28,23 +31,18 @@ from RTMPose import (
     PROJECT_ROOT,
     SPLIT_NAMES,
     RTMPoseDataset,
-    SSDLiteDetector,
     build_all_split_indices,
     build_dataloader,
-    build_pose_model,
-    decode_keypoints_with_predictor,
     expand_box_xyxy,
     load_project_config,
     load_yaml_file,
     merge_cli_with_yaml,
     prepare_training_components,
-    resolve_detector_model_config,
     resolve_device,
     resolve_model_config,
     select_samples_for_split,
     set_seed,
     validate_mutual_exclusion,
-    visibility_probabilities,
     write_json,
 )
 
@@ -53,21 +51,15 @@ from RTMPose import (
 def predict_video_file(args: argparse.Namespace) -> Path:
     project_cfg = load_project_config(args.project_config)
     model, _ = load_model_from_checkpoint_for_inference(
-        checkpoint_path=args.checkpoint,
+        model_path=args.checkpoint.parent,
+        checkpoint=args.checkpoint,
         device=resolve_device(args.device),
-        resolve_model_config=lambda: resolve_model_config(args),
-        load_yaml_file=load_yaml_file,
-        build_pose_model=build_pose_model,
     )
     model_cfg = dict(model.cfg)
-    detector_model_cfg = resolve_detector_model_config(args)
-    detector = SSDLiteDetector(
-        detector_model_cfg,
-        checkpoint_path=args.detector_checkpoint,
+    detector = load_detector(
+        args.detector_checkpoint.parent,
+        args.detector_checkpoint,
         device=resolve_device(str(args.detector_device or args.device)),
-        score_threshold=float(args.detector_score_threshold),
-        image_mean=detector_model_cfg.get("image_mean", [0.485, 0.456, 0.406]),
-        image_std=detector_model_cfg.get("image_std", [0.229, 0.224, 0.225]),
     )
     input_w, input_h = tuple(model_cfg["model"]["heads"]["bodypart"].get("input_size", [256, 256]))
     cap = cv2.VideoCapture(str(args.video))
@@ -99,7 +91,7 @@ def predict_video_file(args: argparse.Namespace) -> Path:
         if not ok:
             break
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        det_box, _ = detector.detect_single(frame_rgb)
+        det_box, _ = detector.detect_single(frame_rgb, score_threshold=float(args.detector_score_threshold))
         if det_box is not None:
             crop_box = expand_box_xyxy(det_box, frame_rgb.shape[:2], float(args.crop_expand_scale))
             x1, y1, x2, y2 = crop_box
@@ -153,11 +145,9 @@ def command_predict(args: argparse.Namespace) -> int:
     project_cfg = load_project_config(args.project_config)
     use_masks = float(getattr(args, "weak_sample_weight", 1.0)) > 0.0
     model, _ = load_model_from_checkpoint_for_inference(
-        checkpoint_path=args.checkpoint,
+        model_path=args.checkpoint.parent,
+        checkpoint=args.checkpoint,
         device=device,
-        resolve_model_config=lambda: resolve_model_config(args),
-        load_yaml_file=load_yaml_file,
-        build_pose_model=build_pose_model,
     )
     model_cfg = dict(model.cfg)
     split_indices = build_all_split_indices(
@@ -211,9 +201,6 @@ def command_predict(args: argparse.Namespace) -> int:
     predictions = predict_dataset(
         model=model,
         dataloader=loader,
-        bodyparts=project_cfg.bodyparts,
-        decode_keypoints_with_predictor=decode_keypoints_with_predictor,
-        visibility_probabilities=visibility_probabilities,
     )
     output_dir = build_predict_output_dir(
         args.checkpoint,

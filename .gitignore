@@ -6,3 +6,4 @@ videos/**
 test_videos/**
 *.pyc
 .cache
+.vscode/*

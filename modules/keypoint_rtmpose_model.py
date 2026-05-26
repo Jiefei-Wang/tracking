@@ -54,6 +54,7 @@ class StandaloneRTMPose(nn.Module):
     ) -> None:
         super().__init__()
         self.cfg = model_cfg
+        self.bodyparts: list[str] = []
         self.backbone = backbone
         self.head = head
         self.visibility_head = visibility_head
