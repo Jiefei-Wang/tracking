@@ -129,30 +129,11 @@ def save_frames_with_predictions(
     return saved_paths
 
 
-@overload
-def extract_frames(
-    video_path: str | Path,
-    frame_indices: int | Iterable[int],
-    output_dir: None,
-    overwrite: bool = False,
-) -> list[np.ndarray]:
-    ...
-
-
-@overload
-def extract_frames(
-    video_path: str | Path,
-    frame_indices: int | Iterable[int],
-    output_dir: str | Path,
-    overwrite: bool = False,
-) -> list[Path]:
-    ...
-
 
 def extract_frames(
     video_path: str | Path,
     frame_indices: int | Iterable[int],
-    output_dir: str | Path | None,
+    output_dir: str | Path | None = None,
     overwrite: bool = False,
 ) -> list[Path] | list[np.ndarray]:
     video_path = Path(video_path)
