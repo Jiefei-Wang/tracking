@@ -2,6 +2,7 @@ input/**/*.pt
 input/**/*.pth
 input/**/*.Identifier
 output/**
+!output/.gitkeep
 videos/**
 test_videos/**
 *.pyc
