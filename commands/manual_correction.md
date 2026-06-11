@@ -4,14 +4,12 @@
 # Extract frames from video (only for the labeled frames)
 python scripts/manual_correction/extract_frames.py
 
-
+# create prediction for the extracted frames
 python scripts/manual_correction/build_prediction.py
 
-
+# Launch the web interface for manual correction
 python scripts/manual_correction/launch_web.py
 
-
-from modules.detector_ssdlite_model import detector_extraction_ssdlite
 ```
 
 

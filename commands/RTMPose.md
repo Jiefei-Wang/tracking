@@ -68,14 +68,8 @@ python scripts/keypoints/RTMPose.py \
 # Predict
 
 ```bash
-python scripts/keypoints/RTMPose_predict.py \
-  --score-cutoff 0.2 \
-  --visibility-cutoff 0.5 \
-  --checkpoint output/RTMPose/no_weak_20260328_174401/checkpoint_best.pt \
-  --video test_videos/Camera4_stitched_600_660.mp4
+python scripts/keypoints/RTMPose_predict.py --score-cutoff 0.2 --visibility-cutoff 0.5  --checkpoint output/RTMPose/no_weak_20260328_174401/checkpoint_best.pt --video test_videos/Camera4_stitched_600_660.mp4 --device auto
 
-
-  output/RTMPose/old_safe_strict40_20260330_134205/history.json
 ```
 
 

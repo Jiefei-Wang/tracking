@@ -135,7 +135,8 @@ def load_model_from_checkpoint_for_inference(
     run_dir = Path(model_path)
     checkpoint_path = Path(checkpoint)
     if not checkpoint_path.is_absolute():
-        checkpoint_path = run_dir / checkpoint_path
+        if not checkpoint_path.is_file():
+            checkpoint_path = run_dir / checkpoint_path
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"RTMPose checkpoint not found: {checkpoint_path}")
 

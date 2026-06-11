@@ -6,7 +6,7 @@ output_root: output/RTMPose
 detector_model_name: default
 detector_checkpoint: output/ssdlite/weak_20260326_090250/checkpoint_best.pt
 detector_score_threshold: 0.5
-detector_device: cuda:0
+detector_device: auto
 detector_batch_size: 16
 pretrained_backbone_checkpoint: input/DeepLabCutModelZoo-SuperAnimal-Quadruped/superanimal_quadruped_rtmpose_s.pt
 pretrain_load_mode: auto
@@ -31,7 +31,7 @@ max_save: 5
 
 training:
   prefix: ""
-  device: cuda:0
+  device: auto
   epochs: 500
   labeled_batch_size: 16
   weak_batch_size: 16
@@ -56,7 +56,7 @@ training:
   log_interval: 10
 
 inference:
-  device: cuda:0
+  device: auto
   eval_batch_size: 16
   lambda_pose: 1.0
   lambda_mask: 0.5

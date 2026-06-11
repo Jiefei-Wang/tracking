@@ -301,13 +301,26 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def resolve_device(device_name: str) -> torch.device:
-    requested = (device_name or "cuda:0").strip()
-    if not requested.startswith("cuda"):
-        raise ValueError(f"CUDA is required for RTMPose training/inference, got {requested!r}")
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required, but torch.cuda.is_available() is False.")
-    return torch.device(requested)
+def resolve_device(requested: str) -> torch.device:
+    requested = str(requested or "auto").strip().lower()
+
+    if requested == "" or requested == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if requested == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but not available.")
+        return torch.device("cuda")
+
+    if requested.startswith("cuda:"):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but not available. Use --device cpu or --device auto.")
+        return torch.device(requested)
+
+    if requested == "cpu":
+        return torch.device("cpu")
+
+    raise ValueError(f"Unknown device: {requested}")
 
 
 def maybe_cuda_sync(device: torch.device) -> None:
@@ -3086,7 +3099,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=PROJECT_ROOT / "input" / "DeepLabCutModelZoo-SuperAnimal-Quadruped" / "superanimal_quadruped_rtmpose_s.pt",
     )
     parser.add_argument("--init-checkpoint", type=Path, default=None)
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--pin-memory", action="store_true")

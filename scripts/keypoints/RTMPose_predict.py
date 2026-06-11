@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--detector-device", type=str, default="")
     parser.add_argument("--detector-score-threshold", type=float, default=0.5)
     parser.add_argument("--detector-batch-size", type=int, default=16)
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--pin-memory", action="store_true")
