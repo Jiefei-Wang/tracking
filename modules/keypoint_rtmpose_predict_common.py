@@ -301,14 +301,31 @@ def keypoint_extraction_rtmpose(
     if not pose_tensors:
         return results
 
-    tensor_batch = torch.stack(pose_tensors, dim=0).to(device)
-    outputs = model(tensor_batch)
-    points, coord_scores = decode_keypoints_with_predictor(model, outputs)
-    visibility_scores = visibility_probabilities(outputs)
+    CHUNK_SIZE = 8
 
-    points = points.detach().cpu().numpy()
-    coord_scores = coord_scores.detach().cpu().numpy()
-    visibility_scores = visibility_scores.detach().cpu().numpy()
+    all_points = []
+    all_coord_scores = []
+    all_visibility_scores = []
+
+    for chunk_start in range(0, len(pose_tensors), CHUNK_SIZE):
+        chunk = pose_tensors[chunk_start:chunk_start + CHUNK_SIZE]
+        chunk_batch = torch.stack(chunk, dim=0).to(device)
+
+        chunk_outputs = model(chunk_batch)
+
+        chunk_points, chunk_coord_scores = decode_keypoints_with_predictor(model, chunk_outputs)
+        chunk_visibility = visibility_probabilities(chunk_outputs)
+
+        all_points.append(chunk_points.detach().cpu())
+        all_coord_scores.append(chunk_coord_scores.detach().cpu())
+        all_visibility_scores.append(chunk_visibility.detach().cpu())
+
+        del chunk_batch, chunk_outputs
+        torch.cuda.empty_cache()
+
+    points = torch.cat(all_points, dim=0).numpy()
+    coord_scores = torch.cat(all_coord_scores, dim=0).numpy()
+    visibility_scores = torch.cat(all_visibility_scores, dim=0).numpy()
 
     for idx, meta in enumerate(pose_meta):
         crop_box = meta["crop_box"]
