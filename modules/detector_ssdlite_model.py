@@ -219,30 +219,62 @@ def detector_extraction_ssdlite(
     detector: SSDLiteDetector,
     images_rgb: Sequence[np.ndarray],
     score_threshold: float = DEFAULT_SCORE_THRESHOLD,
+    batch_size: int = 16,
 ) -> list[list[dict[str, Any]]]:
-    tensors = [
-        torch.from_numpy(image.astype(np.float32).transpose(2, 0, 1) / 255.0).to(detector.device)
-        for image in images_rgb
-    ]
+    # tensors = [
+    #     torch.from_numpy(image.astype(np.float32).transpose(2, 0, 1) / 255.0).to(detector.device)
+    #     for image in images_rgb
+    # ]
 
-    outputs = detector.model(list(tensors))
+    # outputs = detector.model(list(tensors))
     results: list[list[dict[str, Any]]] = []
 
-    for output in outputs:
-        boxes, scores = _filter_detections(output, score_threshold)
-        if boxes is None or scores is None:
-            results.append([])
-            continue
+    for chunk_start in range(0, len(images_rgb), batch_size):
+        chunk = images_rgb[chunk_start:chunk_start + batch_size]
 
-        detections = [
-            {
-                "bbox": box.astype(float).tolist(),
-                "score": float(score),
-            }
-            for box, score in zip(boxes, scores)
+        tensors = [
+            torch.from_numpy(image.astype(np.float32).transpose(2, 0, 1) / 255.0).to(detector.device)
+            for image in chunk  # only this chunk's frames on GPU at once
         ]
 
-        detections.sort(key=lambda item: item["score"], reverse=True)
-        results.append(detections)
+        outputs = detector.model(list(tensors))
 
+        for output in outputs:
+            boxes, scores = _filter_detections(output, score_threshold)
+            if boxes is None or scores is None:
+                results.append([])
+                continue
+
+            detections = [
+                {
+                    "bbox": box.astype(float).tolist(),
+                    "score": float(score),
+                }
+                for box, score in zip(boxes, scores)
+            ]
+            detections.sort(key=lambda item: item["score"], reverse=True)
+            results.append(detections)
+
+        # release this chunk's tensors before next chunk
+        del tensors, outputs
+        torch.cuda.empty_cache()
+   
     return results
+    # for output in outputs:
+    #     boxes, scores = _filter_detections(output, score_threshold)
+    #     if boxes is None or scores is None:
+    #         results.append([])
+    #         continue
+
+    #     detections = [
+    #         {
+    #             "bbox": box.astype(float).tolist(),
+    #             "score": float(score),
+    #         }
+    #         for box, score in zip(boxes, scores)
+    #     ]
+
+    #     detections.sort(key=lambda item: item["score"], reverse=True)
+    #     results.append(detections)
+
+
