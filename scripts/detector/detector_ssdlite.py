@@ -35,14 +35,13 @@ from modules.detector_dataset import (
     set_global_seed,
     summarize_split_indices,
     validate_disjoint_splits,
-    validate_mutual_exclusion,
 )
 from modules.detector_metrics import compute_detection_metrics
 from modules.detector_ssdlite_model import build_ssdlite_model, load_checkpoint, save_checkpoint
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_PROJECT_CONFIG = PROJECT_ROOT / "config.yaml"
 DEFAULT_MODEL_CONFIG = PROJECT_ROOT / "input" / "ssdlite" / "model.yaml"
 DEFAULT_RUN_CONFIG = PROJECT_ROOT / "input" / "ssdlite" / "config.yaml"
@@ -188,7 +187,6 @@ def merge_cli_with_yaml(args: argparse.Namespace, parser: argparse.ArgumentParse
         "config_overwrite",
         "labels_root",
         "frames_root",
-        "masks_root",
         "output_root",
         "checkpoint",
         "input_dir",
@@ -240,12 +238,9 @@ def build_split_indices_from_args(args: argparse.Namespace):
         config=project_cfg,
         labels_root=args.labels_root,
         frames_root=args.frames_root,
-        masks_root=args.masks_root,
         bbox_margin=float(args.bbox_margin),
-        weak_sample_weight=float(args.weak_sample_weight),
         min_box_size=float(args.min_box_size),
     )
-    validate_mutual_exclusion(split_indices)
     return project_cfg, split_indices
 
 
@@ -525,23 +520,19 @@ def train_epoch(
     epoch: int,
     model: torch.nn.Module,
     strong_loader: DataLoader,
-    weak_loader: DataLoader | None,
     optimizer: torch.optim.Optimizer,
     scaler: torch.amp.GradScaler,
     device: torch.device,
     amp_enabled: bool,
-    weak_sample_weight: float,
     log_interval: int,
 ) -> dict[str, float]:
     model.train()
     strong_iter = iter(strong_loader)
-    weak_iter = cycle_loader(weak_loader) if weak_loader is not None else None
     steps = len(strong_loader)
     skipped_batches = 0
     sums = {
         "loss": 0.0,
         "strong_loss": 0.0,
-        "weak_loss": 0.0,
         "cpu_batch_seconds": 0.0,
         "cpu_to_gpu_seconds": 0.0,
         "gpu_forward_seconds": 0.0,
@@ -551,15 +542,12 @@ def train_epoch(
     for step_idx in range(steps):
         cpu_batch_start = time.perf_counter()
         strong_batch = next(strong_iter)
-        weak_batch = next(weak_iter) if weak_iter is not None else None
         cpu_batch_seconds = time.perf_counter() - cpu_batch_start
 
         if len(strong_batch["images"]) < 2:
             skipped_batches += 1
             print(f"Epoch {epoch:03d} step {step_idx + 1:04d}/{steps:04d} skipped strong batch with size < 2")
             continue
-        if weak_batch is not None and len(weak_batch["images"]) < 2:
-            weak_batch = None
 
         optimizer.zero_grad(set_to_none=True)
 
@@ -571,22 +559,8 @@ def train_epoch(
             batch_scale=1.0,
         )
         total_loss = strong_total
-        weak_loss_value = 0.0
         transfer_seconds = strong_transfer
         gpu_forward_seconds = strong_forward
-
-        if weak_batch is not None and weak_sample_weight > 0.0:
-            weak_total, _, weak_transfer, weak_forward = compute_weighted_loss(
-                model=model,
-                batch=weak_batch,
-                device=device,
-                amp_enabled=amp_enabled,
-                batch_scale=weak_sample_weight,
-            )
-            total_loss = total_loss + weak_total
-            weak_loss_value = float(weak_total.detach().item())
-            transfer_seconds += weak_transfer
-            gpu_forward_seconds += weak_forward
 
         backward_start = time.perf_counter()
         scaler.scale(total_loss).backward()
@@ -599,7 +573,6 @@ def train_epoch(
         strong_loss_value = float(strong_total.detach().item())
         sums["loss"] += total_loss_value
         sums["strong_loss"] += strong_loss_value
-        sums["weak_loss"] += weak_loss_value
         sums["cpu_batch_seconds"] += cpu_batch_seconds
         sums["cpu_to_gpu_seconds"] += transfer_seconds
         sums["gpu_forward_seconds"] += gpu_forward_seconds
@@ -608,7 +581,7 @@ def train_epoch(
         if log_interval > 0 and ((step_idx + 1) % log_interval == 0 or (step_idx + 1) == steps):
             print(
                 f"Epoch {epoch:03d} step {step_idx + 1:04d}/{steps:04d} "
-                f"loss={total_loss_value:.4f} strong={strong_loss_value:.4f} weak={weak_loss_value:.4f} "
+                f"loss={total_loss_value:.4f} supervised={strong_loss_value:.4f} "
                 f"cpu={cpu_batch_seconds:.4f}s h2d={transfer_seconds:.4f}s "
                 f"gpu_fwd={gpu_forward_seconds:.4f}s gpu_bwd={backward_seconds:.4f}s"
             )
@@ -671,8 +644,6 @@ def command_train(args: argparse.Namespace) -> int:
         print_split_summaries(split_indices)
 
         train_samples = split_indices["train"].labeled_samples
-        use_weak_training = float(args.weak_sample_weight) > 0.0
-        weak_samples = split_indices["train"].weak_samples if use_weak_training else []
         val_samples = split_indices["val"].labeled_samples
         if not train_samples:
             raise RuntimeError("No labeled training samples found.")
@@ -682,10 +653,9 @@ def command_train(args: argparse.Namespace) -> int:
         train_transform = build_albumentations_pipeline(args.augmentation)
         eval_transform = build_albumentations_pipeline(args.eval_preprocess, deterministic_only=True)
         image_store = RamImageStore(preload_images=bool(args.preload_images))
-        preload_stats = image_store.preload([*train_samples, *weak_samples, *val_samples])
+        preload_stats = image_store.preload([*train_samples, *val_samples])
 
         strong_dataset = DetectionDataset(train_samples, image_store=image_store, transform=train_transform)
-        weak_dataset = DetectionDataset(weak_samples, image_store=image_store, transform=train_transform) if weak_samples else None
         train_eval_dataset = DetectionDataset(train_samples, image_store=image_store, transform=eval_transform)
         val_dataset = DetectionDataset(val_samples, image_store=image_store, transform=eval_transform)
 
@@ -699,18 +669,6 @@ def command_train(args: argparse.Namespace) -> int:
             persistent_workers=bool(args.persistent_workers),
             prefetch_factor=int(args.prefetch_factor) if args.workers > 0 else None,
         )
-        weak_loader = None
-        if weak_dataset is not None and len(weak_dataset) > 0 and use_weak_training:
-            weak_loader = build_dataloader(
-                dataset=weak_dataset,
-                batch_size=int(args.weak_batch_size),
-                shuffle=True,
-                drop_last=True,
-                workers=int(args.workers),
-                pin_memory=bool(args.pin_memory),
-                persistent_workers=bool(args.persistent_workers),
-                prefetch_factor=int(args.prefetch_factor) if args.workers > 0 else None,
-            )
         val_loader = build_dataloader(
             dataset=val_dataset,
             batch_size=int(args.eval_batch_size),
@@ -760,9 +718,8 @@ def command_train(args: argparse.Namespace) -> int:
         history: list[dict[str, Any]] = []
 
         print(
-            f"Training detector with batch_size={args.batch_size}, weak_batch_size={args.weak_batch_size}, "
-            f"workers={args.workers}, preload_images={args.preload_images}, weak_weight={args.weak_sample_weight}, "
-            f"use_weak_training={use_weak_training}"
+            f"Training detector with batch_size={args.batch_size}, "
+            f"workers={args.workers}, preload_images={args.preload_images}"
         )
         selection_metric_name = str(args.selection_metric)
         eval_every_n_epoch = max(int(args.eval_every_n_epoch), 1)
@@ -774,12 +731,10 @@ def command_train(args: argparse.Namespace) -> int:
                 epoch=epoch,
                 model=model,
                 strong_loader=strong_loader,
-                weak_loader=weak_loader,
                 optimizer=optimizer,
                 scaler=scaler,
                 device=device,
                 amp_enabled=bool(args.amp),
-                weak_sample_weight=float(args.weak_sample_weight),
                 log_interval=int(args.log_interval),
             )
             if scheduler is not None:
@@ -822,7 +777,6 @@ def command_train(args: argparse.Namespace) -> int:
                 "train": {
                     "loss": float(train_eval_loss["loss"]),
                     "strong_loss": float(train_metrics["strong_loss"]),
-                    "weak_loss": float(train_metrics["weak_loss"]),
                     "selection_metric": float(train_eval_metrics.get(selection_metric_name, train_eval_metrics.get("map", float("nan")))),
                     "selection_metric_name": selection_metric_name,
                     "metric_eval": train_eval_metrics,
@@ -1052,8 +1006,7 @@ def command_debug(args: argparse.Namespace) -> int:
         split_index = split_indices[split_name]
         print(
             f"  {split_name}: "
-            f"label={len(split_index.labeled_samples)} "
-            f"sam2={len(split_index.weak_samples)}"
+            f"label={len(split_index.labeled_samples)}"
         )
 
     def choose_samples(samples: list[Any]) -> list[Any]:
@@ -1064,21 +1017,17 @@ def command_debug(args: argparse.Namespace) -> int:
         return [samples[index] for index in indices]
 
     label_samples = choose_samples(split_indices[args.split].labeled_samples)
-    sam2_samples = choose_samples(split_indices[args.split].weak_samples)
     debug_root = args.output_root / "debug"
     if debug_root.exists():
         shutil.rmtree(debug_root)
     label_dir = debug_root / "label"
-    sam2_dir = debug_root / "sam2"
     label_dir.mkdir(parents=True, exist_ok=True)
-    sam2_dir.mkdir(parents=True, exist_ok=True)
 
     image_store = RamImageStore(preload_images=bool(args.preload_images))
-    image_store.preload([*label_samples, *sam2_samples])
+    image_store.preload(label_samples)
 
     for source_name, samples, output_dir in (
         ("label", label_samples, label_dir),
-        ("sam2", sam2_samples, sam2_dir),
     ):
         dataset = DetectionDataset(samples, image_store=image_store, transform=train_transform)
         for index in range(len(dataset)):
@@ -1104,11 +1053,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--model-name", default="default")
     parser.add_argument("--labels-root", type=Path, default=PROJECT_ROOT / "input" / "labeled-data")
-    parser.add_argument("--frames-root", type=Path, default=PROJECT_ROOT / "output" / "video_frames")
-    parser.add_argument("--masks-root", type=Path, default=PROJECT_ROOT / "output" / "sam2_labels")
+    parser.add_argument("--frames-root", type=Path, default=PROJECT_ROOT / "output" / "extracted_frames")
     parser.add_argument("--bbox-margin", type=float, default=20.0)
     parser.add_argument("--min-box-size", type=float, default=1.0)
-    parser.add_argument("--weak-sample-weight", type=float, default=0.35)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--pin-memory", action="store_true")
@@ -1126,7 +1073,6 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser = subparsers.add_parser("train")
     train_parser.add_argument("--device", default="cuda:0")
     train_parser.add_argument("--batch-size", type=int, default=8)
-    train_parser.add_argument("--weak-batch-size", type=int, default=8)
     train_parser.add_argument("--eval-batch-size", type=int, default=8)
     train_parser.add_argument("--epochs", type=int, default=50)
     train_parser.add_argument("--optimizer", default="AdamW")

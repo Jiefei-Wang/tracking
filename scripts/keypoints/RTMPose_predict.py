@@ -42,7 +42,6 @@ from RTMPose import (
     resolve_model_config,
     select_samples_for_split,
     set_seed,
-    validate_mutual_exclusion,
     write_json,
 )
 
@@ -143,7 +142,6 @@ def command_predict(args: argparse.Namespace) -> int:
 
     device = resolve_device(args.device)
     project_cfg = load_project_config(args.project_config)
-    use_masks = float(getattr(args, "weak_sample_weight", 1.0)) > 0.0
     model, _ = load_model_from_checkpoint_for_inference(
         model_path=args.checkpoint.parent,
         checkpoint=args.checkpoint,
@@ -154,14 +152,9 @@ def command_predict(args: argparse.Namespace) -> int:
         project_cfg,
         args.labels_root,
         args.labeled_frames_root,
-        args.frames_root,
-        args.masks_root,
-        include_weak=use_masks,
-        require_masks=use_masks,
         auto_val_fraction=float(args.auto_val_fraction),
         split_seed=int(args.seed),
     )
-    validate_mutual_exclusion(split_indices)
     store, detector_boxes, filtered_indices, detector_stats = prepare_training_components(args, model_cfg, split_indices)
     del detector_stats
     samples = select_samples_for_split(filtered_indices, args.split, args.video_name)
@@ -185,8 +178,6 @@ def command_predict(args: argparse.Namespace) -> int:
         train_aug_cfg=data_train_cfg,
         crop_cfg=crop_cfg,
         train_mode=False,
-        include_weak=False,
-        use_masks=use_masks,
     )
     loader = build_dataloader(
         dataset,
@@ -222,9 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-overwrite", "--config_overwrite", dest="config_overwrite", type=Path, default=None)
     parser.add_argument("--model-name", type=str, default="default")
     parser.add_argument("--labels-root", type=Path, default=PROJECT_ROOT / "input" / "labeled-data")
-    parser.add_argument("--labeled-frames-root", type=Path, default=PROJECT_ROOT / "output" / "sam2" / "DLC_frames")
-    parser.add_argument("--frames-root", type=Path, default=PROJECT_ROOT / "output" / "sam2" / "final")
-    parser.add_argument("--masks-root", type=Path, default=PROJECT_ROOT / "output" / "sam2" / "sam2_pickle_filtered")
+    parser.add_argument("--labeled-frames-root", type=Path, default=PROJECT_ROOT / "output" / "extracted_frames")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--detector-model-name", type=str, default="default")
     parser.add_argument("--detector-checkpoint", type=Path, default=PROJECT_ROOT / "output" / "ssdlite" / "no_weak_20260325_224005" / "checkpoint_best.pt")
@@ -237,7 +226,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pin-memory", action="store_true")
     parser.add_argument("--persistent-workers", action="store_true")
     parser.add_argument("--preload-images", action="store_true")
-    parser.add_argument("--preload-masks", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--auto-val-fraction", type=float, default=0.1)
     parser.add_argument("--crop-expand-scale", type=float, default=0.15)
@@ -246,7 +234,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-down-crop-with-context", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--score-cutoff", type=float, default=0.0)
     parser.add_argument("--visibility-cutoff", type=float, default=0.5)
-    parser.add_argument("--weak-sample-weight", type=float, default=1.0)
 
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--prefix", default="")

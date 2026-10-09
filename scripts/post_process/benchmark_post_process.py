@@ -94,7 +94,6 @@ def _ensure_paths(args_ns: argparse.Namespace) -> argparse.Namespace:
         "labels_root",
         "labeled_frames_root",
         "frames_root",
-        "masks_root",
         "output_root",
         "checkpoint",
         "detector_checkpoint",
@@ -138,10 +137,6 @@ def _load_run_args(checkpoint_path: Path) -> argparse.Namespace:
         "pin_memory": False,
         "persistent_workers": True,
         "preload_images": True,
-        "preload_masks": True,
-        "weak_sample_weight": 0.0,
-        "mask_select_policy": "first",
-        "weak_mask_iou_thresh": 0.0,
         "eval_batch_size": 16,
         "device": "cuda:0",
         "detector_device": "",
@@ -166,7 +161,6 @@ def _build_runtime_args(cli_args: argparse.Namespace) -> argparse.Namespace:
     runtime.pin_memory = bool(cli_args.pin_memory)
     runtime.persistent_workers = bool(cli_args.persistent_workers)
     runtime.preload_images = bool(cli_args.preload_images)
-    runtime.preload_masks = bool(cli_args.preload_masks)
     runtime.seed = int(cli_args.seed if cli_args.seed is not None else runtime.seed)
     runtime.auto_val_fraction = float(cli_args.auto_val_fraction if cli_args.auto_val_fraction is not None else runtime.auto_val_fraction)
     runtime.command = "eval"
@@ -177,11 +171,9 @@ def _build_runtime_args(cli_args: argparse.Namespace) -> argparse.Namespace:
     if getattr(runtime, "labels_root", None) is None:
         runtime.labels_root = PROJECT_ROOT / "input" / "labeled-data"
     if getattr(runtime, "labeled_frames_root", None) is None:
-        runtime.labeled_frames_root = PROJECT_ROOT / "output" / "sam2" / "DLC_frames"
+        runtime.labeled_frames_root = PROJECT_ROOT / "output" / "extracted_frames"
     if getattr(runtime, "frames_root", None) is None:
-        runtime.frames_root = PROJECT_ROOT / "output" / "sam2" / "final"
-    if getattr(runtime, "masks_root", None) is None:
-        runtime.masks_root = PROJECT_ROOT / "output" / "sam2" / "sam2_pickle_filtered"
+        runtime.frames_root = PROJECT_ROOT / "output" / "extracted_frames"
     if getattr(runtime, "detector_checkpoint", None) is None:
         raise ValueError("Detector checkpoint was not found in run_config.yaml args; provide --detector-checkpoint.")
 
@@ -233,10 +225,6 @@ def _build_dataset_for_split(
         train_aug_cfg=data_train_cfg,
         crop_cfg=crop_cfg,
         train_mode=False,
-        include_weak=False,
-        use_masks=float(getattr(runtime_args, "weak_sample_weight", 1.0)) > 0.0,
-        mask_select_policy=str(getattr(runtime_args, "mask_select_policy", "first")),
-        weak_mask_iou_thresh=float(getattr(runtime_args, "weak_mask_iou_thresh", 0.0)),
     )
     return dataset, samples
 
@@ -280,7 +268,6 @@ def _predict_split(
         dataloader,
         device,
         float(getattr(runtime_args, "lambda_pose", 1.0)),
-        float(getattr(runtime_args, "lambda_mask", 0.5)),
         float(getattr(runtime_args, "lambda_visibility", 1.0)),
     )
 
@@ -380,12 +367,11 @@ def _collect_context_samples_for_split(
             if image_path is None:
                 continue
             samples.append(
-                rtm.WeakSample(
+                rtm.FrameSample(
                     split=split_name,
                     video_name=str(video_name),
                     frame_idx=int(frame_idx),
                     image_path=str(image_path),
-                    mask_path="",
                 )
             )
     samples.sort(key=lambda s: (str(s.video_name), int(s.frame_idx)))
@@ -416,7 +402,6 @@ def _predict_dense_context_for_split(
     _ = store.preload(
         context_samples,
         preload_images=bool(runtime_args.preload_images),
-        preload_masks=False,
     )
     detector = rtm.load_detector(
         runtime_args.detector_checkpoint.parent,
@@ -459,10 +444,6 @@ def _predict_dense_context_for_split(
         train_aug_cfg=data_train_cfg,
         crop_cfg=crop_cfg,
         train_mode=False,
-        include_weak=False,
-        use_masks=False,
-        mask_select_policy=str(getattr(runtime_args, "mask_select_policy", "first")),
-        weak_mask_iou_thresh=float(getattr(runtime_args, "weak_mask_iou_thresh", 0.0)),
     )
     dataloader = rtm.build_dataloader(
         dataset,
@@ -1783,7 +1764,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pin-memory", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--persistent-workers", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--preload-images", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--preload-masks", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--context-radius", type=int, default=120)
     parser.add_argument("--context-step", type=int, default=1)
     parser.add_argument("--output-root", type=Path, default=PROJECT_ROOT / "output" / "post_process")
@@ -1802,19 +1782,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     model_cfg = _resolve_model_cfg(runtime_args)
     project_cfg = rtm.load_project_config(runtime_args.project_config)
 
-    use_masks = float(getattr(runtime_args, "weak_sample_weight", 1.0)) > 0.0
     split_indices = rtm.build_all_split_indices(
         project_cfg,
         runtime_args.labels_root,
         runtime_args.labeled_frames_root,
-        runtime_args.frames_root,
-        runtime_args.masks_root,
-        include_weak=use_masks,
-        require_masks=use_masks,
         auto_val_fraction=float(runtime_args.auto_val_fraction),
         split_seed=int(runtime_args.seed),
     )
-    rtm.validate_mutual_exclusion(split_indices)
     store, detector_boxes, filtered_indices, detector_stats = rtm.prepare_training_components(runtime_args, model_cfg, split_indices)
 
     model, _ = load_model_from_checkpoint_for_inference(

@@ -1,0 +1,3 @@
+- Use conda tracking environment unless user specify otherwise.
+- All your test and debugging code, along with its output should be in the `tmp` folder.
+- Do not create main function unless user ask you to do so. All code should be working in an interactive terminal. 

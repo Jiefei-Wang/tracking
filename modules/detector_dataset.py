@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pickle
 import random
 import time
 from dataclasses import dataclass
@@ -15,7 +14,7 @@ import torch
 import yaml
 from torch.utils.data import Dataset
 
-from modules.detector_bbox_utils import expand_xyxy, keypoints_to_xyxy, mask_to_xyxy
+from modules.detector_bbox_utils import expand_xyxy, keypoints_to_xyxy
 from modules.label_csv_utils import load_keypoints
 
 SPLIT_NAMES = ("train", "val", "test")
@@ -49,7 +48,6 @@ class DetectionSample:
     roi_boxes: list[list[float]]
     labels: list[int]
     sample_weight: float
-    is_weak: bool
 
     @property
     def sample_id(self) -> str:
@@ -61,7 +59,6 @@ class SplitIndex:
     split: str
     videos: list[str]
     labeled_samples: list[DetectionSample]
-    weak_samples: list[DetectionSample]
     warnings: list[str]
 
 
@@ -114,29 +111,6 @@ def list_frame_files(video_frames_dir: Path) -> dict[int, str]:
     return frame_files
 
 
-def load_mask_frame_dict(mask_path: Path) -> dict[int, np.ndarray]:
-    with mask_path.open("rb") as f:
-        payload = pickle.load(f)
-    mask_map: dict[int, np.ndarray] = {}
-    if not isinstance(payload, Mapping):
-        return mask_map
-    for key, value in payload.items():
-        try:
-            frame_idx = int(key)
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(value, Mapping) or not value:
-            continue
-        first_mask = value[next(iter(value))]
-        arr = np.asarray(first_mask).astype(bool)
-        if arr.ndim == 3 and arr.shape[0] == 1:
-            arr = arr[0]
-        if arr.ndim != 2:
-            continue
-        mask_map[frame_idx] = arr
-    return mask_map
-
-
 def extract_keypoints_for_row(df, row_idx: int, bodyparts: Sequence[str]) -> tuple[list[list[float]], list[int]]:
     row = df.iloc[row_idx]
     keypoints: list[list[float]] = []
@@ -160,21 +134,16 @@ def build_split_index(
     split: str,
     labels_root: Path,
     frames_root: Path,
-    masks_root: Path,
     bbox_margin: float,
-    weak_sample_weight: float,
     min_box_size: float = 1.0,
 ) -> SplitIndex:
     videos = config.videos_for_split(split)
     labeled_samples: list[DetectionSample] = []
-    weak_samples: list[DetectionSample] = []
     warnings: list[str] = []
-    include_weak = split == "train"
 
     for video_name in videos:
         csv_path = labels_root / video_name / "CollectedData_rats.csv"
         frames_dir = frames_root / video_name
-        mask_path = masks_root / f"{video_name}.pkl"
 
         if not frames_dir.is_dir():
             warnings.append(f"{split}:{video_name}: missing frames dir {frames_dir}")
@@ -184,18 +153,10 @@ def build_split_index(
             warnings.append(f"{split}:{video_name}: no frame files found")
             continue
 
-        mask_map: dict[int, np.ndarray] = {}
-        if mask_path.is_file():
-            mask_map = load_mask_frame_dict(mask_path)
-        elif include_weak:
-            warnings.append(f"{split}:{video_name}: missing SAM2 mask file {mask_path}")
-
-        labeled_frame_indices: set[int] = set()
         if csv_path.is_file():
             label_df = load_keypoints(str(csv_path))
             for row_idx in range(len(label_df)):
                 frame_idx = int(label_df["frame"].iloc[row_idx])
-                labeled_frame_indices.add(frame_idx)
                 image_path = frame_files.get(frame_idx)
                 if image_path is None:
                     warnings.append(f"{split}:{video_name}: labeled frame {frame_idx} missing image")
@@ -229,53 +190,15 @@ def build_split_index(
                         roi_boxes=[box],
                         labels=[1],
                         sample_weight=1.0,
-                        is_weak=False,
                     )
                 )
         else:
             warnings.append(f"{split}:{video_name}: missing label CSV {csv_path}")
 
-        if not include_weak:
-            continue
-
-        if not mask_map:
-            warnings.append(f"{split}:{video_name}: no valid masks found for weak supervision")
-            continue
-        for frame_idx, image_path in frame_files.items():
-            if frame_idx in labeled_frame_indices:
-                continue
-            mask = mask_map.get(frame_idx)
-            if mask is None:
-                continue
-            image = cv2.imread(image_path, cv2.IMREAD_COLOR)
-            if image is None:
-                warnings.append(f"{split}:{video_name}: failed to read image {image_path}")
-                continue
-            height, width = image.shape[:2]
-            box = mask_to_xyxy(mask=mask, width=width, height=height, min_size=min_box_size)
-            if box is None:
-                continue
-            expanded_box = expand_xyxy(box, margin=bbox_margin, width=width, height=height)
-            weak_samples.append(
-                DetectionSample(
-                    split=split,
-                    source="sam2",
-                    video_name=video_name,
-                    frame_idx=frame_idx,
-                    image_path=image_path,
-                    boxes=[expanded_box],
-                    roi_boxes=[box],
-                    labels=[1],
-                    sample_weight=float(weak_sample_weight),
-                    is_weak=True,
-                )
-            )
-
     return SplitIndex(
         split=split,
         videos=videos,
         labeled_samples=sorted(labeled_samples, key=lambda sample: (sample.video_name, sample.frame_idx)),
-        weak_samples=sorted(weak_samples, key=lambda sample: (sample.video_name, sample.frame_idx)),
         warnings=warnings,
     )
 
@@ -284,9 +207,7 @@ def build_all_split_indices(
     config: ProjectConfig,
     labels_root: Path,
     frames_root: Path,
-    masks_root: Path,
     bbox_margin: float,
-    weak_sample_weight: float,
     min_box_size: float = 1.0,
 ) -> dict[str, SplitIndex]:
     return {
@@ -295,9 +216,7 @@ def build_all_split_indices(
             split=split,
             labels_root=labels_root,
             frames_root=frames_root,
-            masks_root=masks_root,
             bbox_margin=bbox_margin,
-            weak_sample_weight=weak_sample_weight,
             min_box_size=min_box_size,
         )
         for split in SPLIT_NAMES
@@ -311,25 +230,9 @@ def summarize_split_indices(split_indices: Mapping[str, SplitIndex]) -> dict[str
         payload[split] = {
             "videos": list(index.videos),
             "labeled_sample_count": len(index.labeled_samples),
-            "weak_sample_count": len(index.weak_samples),
             "warnings": list(index.warnings),
         }
     return payload
-
-
-def validate_mutual_exclusion(split_indices: Mapping[str, SplitIndex]) -> None:
-    for split in SPLIT_NAMES:
-        index = split_indices[split]
-        labeled_ids = {sample.sample_id for sample in index.labeled_samples}
-        weak_ids = {sample.sample_id for sample in index.weak_samples}
-        overlap = sorted(labeled_ids & weak_ids)
-        if overlap:
-            preview = ", ".join(overlap[:10])
-            if len(overlap) > 10:
-                preview += ", ..."
-            raise ValueError(
-                f"Labeled data and SAM2 weak samples overlap in split '{split}': {preview}"
-            )
 
 
 def print_split_summaries(split_indices: Mapping[str, SplitIndex]) -> None:
@@ -343,7 +246,6 @@ def print_split_summaries(split_indices: Mapping[str, SplitIndex]) -> None:
         for video_name in index.videos:
             print(f"  - {video_name}")
         print(f"Labeled samples: {len(index.labeled_samples)}")
-        print(f"Weak samples: {len(index.weak_samples)}")
         print(f"Warnings: {len(index.warnings)}")
 
 
@@ -498,7 +400,6 @@ class DetectionDataset(Dataset):
             "area": area_tensor,
             "iscrowd": torch.zeros((boxes_tensor.shape[0],), dtype=torch.int64),
             "sample_weight": torch.tensor(float(sample.sample_weight), dtype=torch.float32),
-            "is_weak": torch.tensor(1 if sample.is_weak else 0, dtype=torch.int64),
             "sample_id": sample.sample_id,
             "video_name": sample.video_name,
             "frame_idx": sample.frame_idx,
@@ -526,8 +427,6 @@ def select_samples_for_prediction(
 ) -> list[DetectionSample]:
     index = split_indices[split]
     samples = list(index.labeled_samples)
-    if split == "train":
-        samples.extend(index.weak_samples)
     if video_name is None:
         return sorted(samples, key=lambda sample: (sample.video_name, sample.frame_idx))
     return [sample for sample in samples if sample.video_name == video_name]

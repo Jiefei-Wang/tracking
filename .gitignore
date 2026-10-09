@@ -11,3 +11,4 @@ test_videos/**
 .vscode/*
 .DS_Store
 tracking.zip
+tmp/**
