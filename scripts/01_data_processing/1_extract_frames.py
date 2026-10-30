@@ -53,13 +53,30 @@ def find_video_path(video_root: Path, video_name: str) -> Path:
     raise FileNotFoundError(f"Could not find a video for '{video_name}' under {video_root}")
 
 
+def prune_stale_jpgs(target_dir: Path, keep_indices: set[int]) -> int:
+    """Delete JPGs in target_dir whose index is no longer in the label file."""
+    removed = 0
+    if not target_dir.is_dir():
+        return 0
+    for img_path in target_dir.glob("*.jpg"):
+        try:
+            idx = int(img_path.stem)
+        except ValueError:
+            continue
+        if idx not in keep_indices:
+            img_path.unlink()
+            removed += 1
+    return removed
+
+
 def process_label_file(label_path: Path, video_root: Path, output_root: Path) -> int:
     video_name = label_path.stem
     video_path = find_video_path(video_root, video_name)
     frame_indices = read_frame_indices(label_path)
     target_dir = output_root / video_name
     saved_paths = extract_frames(video_path, frame_indices, target_dir, overwrite=overwrite)
-    return len(saved_paths)
+    pruned = prune_stale_jpgs(target_dir, set(frame_indices))
+    return len(saved_paths), pruned
 
 
 label_dir = to_repo_path(label_dir)
@@ -79,16 +96,19 @@ if not label_paths:
     raise FileNotFoundError(f"No label JSON files found in {label_dir}")
 
 total_saved = 0
+total_pruned = 0
 failures = []
 for label_path in label_paths:
     try:
-        saved = process_label_file(label_path, video_dir, output_dir)
+        saved, pruned = process_label_file(label_path, video_dir, output_dir)
         total_saved += saved
-        print(f"[ok] {label_path.stem}: saved {saved}")
+        total_pruned += pruned
+        print(f"[ok] {label_path.stem}: saved {saved}, pruned {pruned}")
     except Exception as exc:  # noqa: BLE001
         failures.append((label_path.name, str(exc)))
         print(f"[error] {label_path.name}: {exc}")
 
-print(f"Finished. Processed {len(label_paths)} label files, saved {total_saved} frames.")
+print(f"Finished. Processed {len(label_paths)} label files, saved {total_saved} frames, "
+      f"pruned {total_pruned} stale JPGs.")
 if failures:
     raise SystemExit("Some files failed:\n" + "\n".join(f"- {name}: {message}" for name, message in failures))
