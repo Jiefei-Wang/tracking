@@ -1804,6 +1804,10 @@
     }
   },
   {
+    "frame_idx": 2454,
+    "labels": {}
+  },
+  {
     "frame_idx": 2506,
     "labels": {
       "L_frontpaw": [
@@ -2100,10 +2104,6 @@
   },
   {
     "frame_idx": 4672,
-    "labels": {}
-  },
-  {
-    "frame_idx": 4909,
     "labels": {}
   },
   {
