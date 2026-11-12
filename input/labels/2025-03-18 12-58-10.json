@@ -1,6 +1,6 @@
 [
   {
-    "frame_idx": 32,
+    "frame_idx": 16,
     "labels": {
       "L_backpaw": [
         1,
@@ -60,7 +60,7 @@
     }
   },
   {
-    "frame_idx": 45,
+    "frame_idx": 22,
     "labels": {
       "L_backpaw": [
         1,
@@ -130,7 +130,7 @@
     }
   },
   {
-    "frame_idx": 68,
+    "frame_idx": 34,
     "labels": {
       "L_backpaw": [
         1,
@@ -200,7 +200,7 @@
     }
   },
   {
-    "frame_idx": 84,
+    "frame_idx": 42,
     "labels": {
       "L_backpaw": [
         1,
@@ -265,7 +265,7 @@
     }
   },
   {
-    "frame_idx": 155,
+    "frame_idx": 77,
     "labels": {
       "L_backpaw": [
         1,
@@ -330,7 +330,7 @@
     }
   },
   {
-    "frame_idx": 292,
+    "frame_idx": 146,
     "labels": {
       "L_backpaw": [
         1,
@@ -390,7 +390,7 @@
     }
   },
   {
-    "frame_idx": 297,
+    "frame_idx": 148,
     "labels": {
       "L_backpaw": [
         1,
@@ -450,7 +450,7 @@
     }
   },
   {
-    "frame_idx": 339,
+    "frame_idx": 169,
     "labels": {
       "L_backpaw": [
         1,
@@ -520,7 +520,7 @@
     }
   },
   {
-    "frame_idx": 357,
+    "frame_idx": 178,
     "labels": {
       "L_backpaw": [
         1,
@@ -580,7 +580,7 @@
     }
   },
   {
-    "frame_idx": 368,
+    "frame_idx": 184,
     "labels": {
       "L_backpaw": [
         1,
