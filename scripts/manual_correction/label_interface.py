@@ -9,6 +9,7 @@ import copy
 import json
 import os
 import re
+import subprocess
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,11 +17,19 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 import sys as _sys
 if str(_PROJECT_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_PROJECT_ROOT))
+
+# Support the IDE's ordinary Python run command as well as `streamlit run`.
+if __name__ == "__main__" and get_script_run_ctx(suppress_warning=True) is None:
+    raise SystemExit(subprocess.call([
+        _sys.executable, "-m", "streamlit", "run", str(Path(__file__).resolve()),
+        *_sys.argv[1:],
+    ], cwd=str(_PROJECT_ROOT)))
 
 try:
     st.set_page_config(layout="wide")
@@ -259,7 +268,7 @@ def list_json_label_files() -> List[str]:
     candidates = []
     # Added output/labels_edited so you can reload and resume working on your changes later
     for base in ("input/labels", "output/predicted_frames", "output/labels_edited"):
-        p = Path(base)
+        p = _PROJECT_ROOT / base
         if p.exists() and p.is_dir():
             for f in sorted(p.glob("*.json")):
                 candidates.append(str(f))
@@ -348,7 +357,7 @@ def resolve_frame_idx(image_path: str, labels_data: List[Dict[str, Any]], fallba
 def guess_images_dir(label_path: str) -> Optional[str]:
     if not label_path:
         return None
-    candidate = Path("output") / "extracted_frames" / Path(label_path).stem
+    candidate = _PROJECT_ROOT / "output" / "extracted_frames" / Path(label_path).stem
     return str(candidate) if candidate.is_dir() else None
 
 
@@ -420,13 +429,13 @@ with col1:
         new_label_name = st.text_input("New Labels Filename", "new_labels.json")
         label_choice = str(Path("output/labels_edited") / new_label_name)
 
-    default_images_dir = guess_images_dir(label_choice) or "output/extracted_frames"
+    default_images_dir = guess_images_dir(label_choice) or str(_PROJECT_ROOT / "output/extracted_frames")
     images_dir  = st.text_input("Images folder", default_images_dir)
     image_files = list_image_files(images_dir)
     st.write(f"{len(image_files)} images found")
 
     st.markdown("---")
-    output_labels_dir  = st.text_input("Save labels to folder", "output/labels_edited")
+    output_labels_dir  = st.text_input("Save labels to folder", str(_PROJECT_ROOT / "output/labels_edited"))
     output_name_suffix = st.text_input("Filename suffix", "_new")
 
     # Interactive Frame Stepping Buttons (Prev / Next Frame)
@@ -509,7 +518,12 @@ with col2:
         st.stop()
 
     # ── Image ──────────────────────────────────────────────────────────────
-    pil_img        = Image.open(selected_image).convert("RGB")
+    try:
+        with Image.open(selected_image) as source_image:
+            pil_img = source_image.convert("RGB")
+    except (OSError, ValueError) as exc:
+        st.error(f"Unable to open image: {exc}")
+        st.stop()
     orig_w, orig_h = pil_img.width, pil_img.height
 
     scale = min(1.0, MAX_W / orig_w)
@@ -676,6 +690,9 @@ with col2:
                 label_visibility="collapsed",
             )
             if new_label != lbl:
+                if not new_label.strip() or new_label in used_labels:
+                    st.error("Enter a nonempty, unique keypoint label.")
+                    continue
                 updated_pts = [
                     {**p, "label": new_label} if p["label"] == lbl else p
                     for p in current_points
