@@ -7,6 +7,9 @@ Streamlit label editor z
 import base64
 import copy
 import json
+import cv2
+import math
+import hashlib
 import os
 import re
 import subprocess
@@ -60,8 +63,21 @@ _STATIC_HTML = """<!DOCTYPE html>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
-    body { background: #1a1a2e; font-family: monospace; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
-    canvas { display: block; max-width: 100%; max-height: 100%; }
+    body { background: #1a1a2e; font-family: monospace; overflow: hidden; display: flex; align-items: flex-start; gap: 12px; padding: 8px; position: relative; }
+    #image-area { flex: 1; min-width: 0; position: relative; }
+    canvas { display: block; width: 100%; height: auto; touch-action: none; }
+    #panel { width: 180px; flex-shrink: 0; color: #eee; font: 13px sans-serif; }
+    #panel p { margin: 8px 0; line-height: 1.4; }
+    #palette { overflow-y: auto; max-height: 360px; }
+    .keypoint { padding: 7px; margin: 4px 0; background: #30304b; border-radius: 4px; cursor: grab; touch-action: none; }
+    #trash { margin-top: 12px; padding: 18px 8px; border: 2px dashed #ff7e91; border-radius: 6px; }
+    #trash.active { background: #70283b; }
+    #reset { width: 100%; margin-top: 12px; padding: 9px; cursor: pointer; }
+    #reset:disabled { opacity: .4; cursor: default; }
+    #timeline { width: 100%; margin-top: 12px; accent-color: #80ffdb; }
+    #ticks { position: relative; height: 10px; margin: 0 7px; }
+    #ticks span { position: absolute; width: 2px; height: 8px; background: #ffd60a; }
+    #frame-caption { color: #eee; font: 12px sans-serif; margin-top: 5px; }
     #status {
         position: absolute; top: 8px; left: 8px;
         color: #a0c4ff; font-size: 12px;
@@ -70,8 +86,8 @@ _STATIC_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="status">Loading…</div>
-<canvas id="c"></canvas>
+<div id="image-area"><div id="status">Loading…</div><canvas id="c"></canvas><input id="timeline" type="range" min="0" step="1" aria-label="Video frame"><div id="ticks"></div><div id="frame-caption"></div></div>
+<aside id="panel"><strong>Keypoints</strong><p>Drag a keypoint onto the image to add it.</p><div id="palette"></div><div id="trash">Drag a point here to delete</div><button id="reset" disabled>Reset current frame</button></aside>
 <script>
 var POINT_R = 7;
 var TEXT_SIZE = 11;
@@ -84,6 +100,9 @@ var canvas = document.getElementById("c");
 var ctx    = canvas.getContext("2d");
 var status = document.getElementById("status");
 
+var schema = [];
+var eventCounter = 0;
+var instanceId = Math.random().toString(36).slice(2);
 var points     = [];
 var drag       = null;
 var hoveredIdx = -1;
@@ -105,6 +124,21 @@ window.addEventListener("message", function(e) {
   if (!e.data || e.data.type !== "streamlit:render") return;
   var args = e.data.args;
 
+  document.getElementById("reset").disabled = !args.can_reset;
+  var timeline = document.getElementById("timeline");
+  timeline.max = Math.max(0, args.frame_count - 1);
+  timeline.value = args.frame_idx;
+  timeline.disabled = args.frame_count <= 1;
+  document.getElementById("frame-caption").textContent = "Frame " + args.frame_idx + " / " + timeline.max;
+  var ticks = document.getElementById("ticks");
+  ticks.replaceChildren();
+  (args.label_indices || []).forEach(function(index) {
+    var tick = document.createElement("span");
+    tick.style.left = (100 * index / Math.max(1, args.frame_count - 1)) + "%";
+    tick.title = "Labeled frame " + index;
+    ticks.appendChild(tick);
+  });
+  schema = args.schema || [];
   DISPLAY_W = args.display_w;
   DISPLAY_H = args.display_h;
   POINT_R   = args.point_size || 7;
@@ -132,20 +166,34 @@ window.addEventListener("message", function(e) {
     draw();
   }
 
-  status.textContent = "Move mode — drag points to reposition";
+  status.textContent = "Drag points to move or delete";
+  renderPalette();
+  window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:setFrameHeight", height:Math.max(canvas.getBoundingClientRect().height + 85, document.getElementById("panel").scrollHeight + 20)}, "*");
 });
 
 // Step 3: send display-space coords back to Python
 function sendPositions() {
   var out = points.map(function(p) {
-    return { x: Math.round(p.x), y: Math.round(p.y) };
+    return { label: p.label, x: p.x, y: p.y };
   });
   window.parent.postMessage({ 
     isStreamlitMessage: true, 
     type: "streamlit:setComponentValue", 
-    value: out 
+    value: {event_id: instanceId + ":" + (++eventCounter), points: out}
   }, "*");
 }
+
+function sendAction(action, extra) {
+  window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:setComponentValue",
+    value:Object.assign({event_id:instanceId + ":" + (++eventCounter), action:action}, extra || {})}, "*");
+}
+document.getElementById("reset").addEventListener("click", function() { sendAction("reset"); });
+document.getElementById("timeline").addEventListener("input", function(e) {
+  document.getElementById("frame-caption").textContent = "Frame " + e.target.value + " / " + e.target.max;
+});
+document.getElementById("timeline").addEventListener("change", function(e) {
+  sendAction("navigate", {frame_idx:Number(e.target.value)});
+});
 
 // ── Hit test ──────────────────────────────────────────────────────────────
 function pointAt(cx, cy) {
@@ -197,54 +245,76 @@ function draw() {
   });
 }
 
-// ── Mouse ─────────────────────────────────────────────────────────────────
-canvas.addEventListener("mousedown", function(e) {
-  var r   = canvas.getBoundingClientRect();
-  var cx  = e.clientX - r.left, cy = e.clientY - r.top;
-  var idx = pointAt(cx, cy);
-  if (idx >= 0) drag = { idx: idx, offX: cx - points[idx].x, offY: cy - points[idx].y };
+function renderPalette() {
+  var palette = document.getElementById("palette");
+  palette.replaceChildren();
+  schema.filter(function(label) { return !points.some(function(p) { return p.label === label; }); }).forEach(function(label) {
+    var item = document.createElement("div");
+    item.className = "keypoint";
+    item.textContent = label;
+    item.addEventListener("pointerdown", function(e) {
+      e.preventDefault();
+      drag = {label: label};
+      item.setPointerCapture(e.pointerId);
+    });
+    palette.appendChild(item);
+  });
+  if (!palette.children.length) palette.textContent = "All keypoints placed";
+}
+function position(e) {
+  var r = canvas.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*DISPLAY_W/r.width, y:(e.clientY-r.top)*DISPLAY_H/r.height};
+}
+function inside(e, element) {
+  var r = element.getBoundingClientRect();
+  return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+}
+canvas.addEventListener("pointerdown", function(e) {
+  var p = position(e), idx = pointAt(p.x, p.y);
+  if (idx < 0) return;
+  e.preventDefault();
+  drag = {idx:idx, offX:p.x-points[idx].x, offY:p.y-points[idx].y, original:{...points[idx]}};
+  canvas.setPointerCapture(e.pointerId);
 });
-
-canvas.addEventListener("mousemove", function(e) {
-  var r  = canvas.getBoundingClientRect();
-  var cx = e.clientX - r.left, cy = e.clientY - r.top;
-  if (drag) {
-    points[drag.idx].x = Math.max(0, Math.min(DISPLAY_W, cx - drag.offX));
-    points[drag.idx].y = Math.max(0, Math.min(DISPLAY_H, cy - drag.offY));
-    draw();
-  } else {
-    var h = pointAt(cx, cy);
-    if (h !== hoveredIdx) {
-      hoveredIdx = h;
-      canvas.style.cursor = h >= 0 ? "grab" : "default";
-      draw();
-    }
+window.addEventListener("pointermove", function(e) {
+  var p = position(e);
+  if (drag && drag.idx !== undefined) {
+    points[drag.idx].x = Math.max(0, Math.min(DISPLAY_W, p.x-drag.offX));
+    points[drag.idx].y = Math.max(0, Math.min(DISPLAY_H, p.y-drag.offY));
   }
-});
-
-canvas.addEventListener("mouseup",    function() { if (drag) { drag = null; sendPositions(); } });
-canvas.addEventListener("mouseleave", function() { if (drag) { drag = null; sendPositions(); } });
-
-// ── Touch ─────────────────────────────────────────────────────────────────
-canvas.addEventListener("touchstart", function(e) {
-  e.preventDefault();
-  var r = canvas.getBoundingClientRect(), t = e.touches[0];
-  var cx = t.clientX - r.left, cy = t.clientY - r.top;
-  var idx = pointAt(cx, cy);
-  if (idx >= 0) drag = { idx: idx, offX: cx - points[idx].x, offY: cy - points[idx].y };
-}, { passive: false });
-
-canvas.addEventListener("touchmove", function(e) {
-  e.preventDefault();
-  if (!drag) return;
-  var r = canvas.getBoundingClientRect(), t = e.touches[0];
-  var cx = t.clientX - r.left, cy = t.clientY - r.top;
-  points[drag.idx].x = Math.max(0, Math.min(DISPLAY_W, cx - drag.offX));
-  points[drag.idx].y = Math.max(0, Math.min(DISPLAY_H, cy - drag.offY));
+  hoveredIdx = drag ? -1 : pointAt(p.x,p.y);
+  document.getElementById("trash").classList.toggle("active", !!drag && drag.idx !== undefined && inside(e, document.getElementById("trash")));
   draw();
-}, { passive: false });
-
-canvas.addEventListener("touchend", function() { if (drag) { drag = null; sendPositions(); } });
+});
+window.addEventListener("pointerup", function(e) {
+  if (!drag) return;
+  var changed = false;
+  if (drag.idx !== undefined) {
+    if (inside(e, document.getElementById("trash"))) {
+      points.splice(drag.idx, 1);
+      changed = true;
+    } else if (inside(e, canvas)) {
+      changed = true;
+    } else {
+      points[drag.idx] = drag.original;
+    }
+  } else if (inside(e, canvas) && !points.some(function(p) {return p.label === drag.label;})) {
+    var p = position(e);
+    points.push({label:drag.label, x:p.x, y:p.y, color:COLORS[points.length % COLORS.length]});
+    changed = true;
+  }
+  drag = null;
+  document.getElementById("trash").classList.remove("active");
+  renderPalette();
+  draw();
+  if (changed) sendPositions();
+});
+window.addEventListener("pointercancel", function() {
+  if (drag && drag.idx !== undefined) points[drag.idx] = drag.original;
+  drag = null;
+  document.getElementById("trash").classList.remove("active");
+  draw();
+});
 </script>
 </body>
 </html>"""
@@ -407,357 +477,247 @@ def compute_scale_for_image(image_path: str, max_w: int = MAX_W):
     return disp_w / w, disp_h / h
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# App
-# ─────────────────────────────────────────────────────────────────────────────
+# Video documents keep a saved snapshot and a working copy in original pixels.
+# Merely viewing a frame never inserts a row.
+def video_label_path(video_path):
+    name = Path(video_path).stem + ".json"
+    for folder in ("input/labels", "output/labels_edited", "output/predicted_frames"):
+        candidate = _PROJECT_ROOT / folder / name
+        if candidate.exists():
+            return candidate
+    return _PROJECT_ROOT / "input/labels" / name
+
+
+def open_document(video_path):
+    path = video_label_path(video_path)
+    if not path.exists():
+        save_labels(str(path), [])
+    frames = frame_list_to_map(load_labels(str(path)))
+    return {"path": str(path), "saved": copy.deepcopy(frames), "frames": frames, "history": {}}
+
+
+def save_document(document):
+    save_labels(document["path"], map_to_frame_list(document["frames"]))
+    document["saved"] = copy.deepcopy(document["frames"])
+
+
+def change_frame(document, index, labels):
+    before = copy.deepcopy(document["frames"].get(index))
+    if before == labels:
+        return
+    history = document["history"].setdefault(index, {"states": [before], "position": 0})
+    history["states"] = history["states"][:history["position"] + 1] + [copy.deepcopy(labels)]
+    history["position"] += 1
+    if labels is None:
+        document["frames"].pop(index, None)
+    else:
+        document["frames"][index] = labels
+
+
+@st.cache_data
+def video_frame_count(video_path):
+    cap = cv2.VideoCapture(video_path)
+    try:
+        if not cap.isOpened():
+            raise ValueError("Unable to open video")
+        count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if count < 1:
+            raise ValueError("Video has no readable frames")
+        return count
+    finally:
+        cap.release()
+
+
+@st.cache_data(max_entries=16)
+def read_video_frame(video_path, index):
+    cap = cv2.VideoCapture(video_path)
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ok, frame = cap.read()
+        if not ok:
+            raise ValueError(f"Unable to read frame {index}")
+        return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    finally:
+        cap.release()
+
 
 st.title("Label Editor")
+videos = sorted(str(p) for p in (_PROJECT_ROOT / "videos").rglob("*")
+                if p.is_file() and p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".m4v"})
+if not videos:
+    st.info("No videos found in the videos folder.")
+    st.stop()
+state = st.session_state
+if "video_editor_active" not in state:
+    state.video_editor_active = videos[0]
+    state.video_editor_document = open_document(videos[0])
+    state.video_editor_frame = min(state.video_editor_document["frames"], default=0)
+if "video_editor_selection_update" in state:
+    state.video_editor_choice = state.pop("video_editor_selection_update")
+if "video_editor_frame_update" in state:
+    state.video_editor_frame = state.pop("video_editor_frame_update")
 
-col1, col2 = st.columns([1, 3])
 
-with col1:
-    label_files  = list_json_label_files()
-    # Option to initialize brand new tracking profiles completely from scratch
-    options = ["-- Create New Labels --"] + label_files
-    
-    if "label_choice_state" not in st.session_state:
-        st.session_state.label_choice_state = options[0]
-        
-    label_choice = st.selectbox("Labels JSON", options, key="label_choice_state")
+def switch_video(target):
+    document = open_document(target)
+    state.video_editor_active = target
+    state.video_editor_document = document
+    state.video_editor_frame_update = min(document["frames"], default=0)
+    state.video_editor_selection_update = target
 
-    if label_choice == "-- Create New Labels --":
-        new_label_name = st.text_input("New Labels Filename", "new_labels.json")
-        label_choice = str(Path("output/labels_edited") / new_label_name)
 
-    default_images_dir = guess_images_dir(label_choice) or str(_PROJECT_ROOT / "output/extracted_frames")
-    images_dir  = st.text_input("Images folder", default_images_dir)
-    image_files = list_image_files(images_dir)
-    st.write(f"{len(image_files)} images found")
-
-    st.markdown("---")
-    output_labels_dir  = st.text_input("Save labels to folder", str(_PROJECT_ROOT / "output/labels_edited"))
-    output_name_suffix = st.text_input("Filename suffix", "_new")
-
-    # Interactive Frame Stepping Buttons (Prev / Next Frame)
-    if "selected_image_state" not in st.session_state and image_files:
-        st.session_state.selected_image_state = image_files[0]
-    elif image_files and st.session_state.selected_image_state not in image_files:
-        st.session_state.selected_image_state = image_files[0]
-
-    if image_files:
+@st.dialog("Save changes before switching video?", dismissible=False)
+def confirm_video_switch(target):
+    st.write(f"Save changes to {Path(state.video_editor_active).stem}?")
+    yes, no, cancel = st.columns(3)
+    if yes.button("Yes", type="primary", use_container_width=True):
         try:
-            curr_idx = image_files.index(st.session_state.selected_image_state)
-        except ValueError:
-            curr_idx = 0
+            save_document(state.video_editor_document)
+            switch_video(target)
+        except (OSError, ValueError) as exc:
+            st.error(str(exc))
+            return
+        st.rerun()
+    if no.button("No", use_container_width=True):
+        switch_video(target)
+        st.rerun()
+    if cancel.button("Cancel", use_container_width=True):
+        state.video_editor_selection_update = state.video_editor_active
+        st.rerun()
 
-        nav_col1, nav_col2 = st.columns(2)
-        with nav_col1:
-            if st.button("◀ Previous Frame", disabled=(curr_idx <= 0), use_container_width=True):
-                st.session_state.selected_image_state = image_files[curr_idx - 1]
-                st.rerun()
-        with nav_col2:
-            if st.button("Next Frame ▶", disabled=(curr_idx >= len(image_files) - 1), use_container_width=True):
-                st.session_state.selected_image_state = image_files[curr_idx + 1]
-                st.rerun()
 
-        selected_image = st.selectbox("Choose image", image_files, key="selected_image_state")
-    else:
-        selected_image = st.selectbox("Choose image", [])
-
-    filename   = Path(selected_image).name if selected_image else ""
-    parsed_idx = digits_from_filename(filename) if filename else None
-
-    if image_files and selected_image:
-        st.caption(f"Frame {curr_idx + 1} of {len(image_files)} — {filename}")
-
-    resolved_frame_idx = resolve_frame_idx(selected_image, labels_data=load_labels(label_choice), fallback=parsed_idx)
-
-    frame_idx = st.number_input(
-        "Frame index (override)",
-        value=resolved_frame_idx,
-        step=1,
-        key=f"frame_idx_override_{selected_image}",
+left, image_column = st.columns([1, 4])
+with left:
+    selected = st.selectbox("Video name", videos, format_func=lambda v: Path(v).stem, key="video_editor_choice")
+    if selected != state.video_editor_active:
+        if state.video_editor_document["frames"] != state.video_editor_document["saved"]:
+            confirm_video_switch(selected)
+        else:
+            switch_video(selected)
+            st.rerun()
+    document = state.video_editor_document
+    try:
+        frame_count = video_frame_count(state.video_editor_active)
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+    state.video_editor_frame = max(0, min(frame_count - 1, int(state.get("video_editor_frame", state.get("video_editor_position", 0)))))
+    st.markdown(
+        "<style>.st-key-video_editor_frame button { display: none; }</style>",
+        unsafe_allow_html=True,
     )
-
-    # ── Delete Frame ────────────────────────────────────────────────────────
+    json_indices = sorted(document["frames"])
+    current_json_index = (
+        json_indices.index(state.video_editor_frame) + 1
+        if state.video_editor_frame in document["frames"] else "—"
+    )
+    frame_index_label = (
+        f"Frame index (total in json: {len(json_indices)}, "
+        f"current json index: {current_json_index})"
+    )
+    frame_idx = int(st.number_input(frame_index_label, min_value=0, max_value=frame_count - 1,
+                                   step=1, key="video_editor_frame"))
+    state.video_editor_position = frame_idx
+    indices = sorted(i for i in document["frames"] if 0 <= i < frame_count)
+    previous = [i for i in indices if i < frame_idx]
+    following = [i for i in indices if i > frame_idx]
+    prev_col, next_col = st.columns(2)
+    if prev_col.button("◀ Previous", disabled=not previous, use_container_width=True):
+        state.video_editor_frame_update = previous[-1]
+        st.rerun()
+    if next_col.button("Next ▶", disabled=not following, use_container_width=True):
+        state.video_editor_frame_update = following[0]
+        st.rerun()
+    if st.button("Save", type="primary", disabled=document["frames"] == document["saved"], use_container_width=True):
+        try:
+            save_document(document)
+        except OSError as exc:
+            st.error(f"Unable to save labels: {exc}")
+        else:
+            st.rerun()
     st.markdown("---")
     st.markdown("**Frame Management**")
-    if selected_image and image_files:
-        if st.button("Delete this frame", type="primary", use_container_width=True):
-            deleted_path = Path(selected_image)
-            if deleted_path.is_file():
-                deleted_path.unlink()
-
-            deleted_fidx = parsed_idx
-            output_path = get_output_label_path(label_choice, output_labels_dir, output_name_suffix)
-            if deleted_fidx is not None:
-                lbl_data = load_labels(label_choice)
-                lbl_data = [e for e in lbl_data if int(e.get("frame_idx", -1)) != deleted_fidx]
-                save_labels(output_path, lbl_data)
-
-            list_image_files.clear()
-            remaining = list_image_files(images_dir)
-            if remaining:
-                new_idx = min(curr_idx, len(remaining) - 1)
-                st.session_state.selected_image_state = remaining[new_idx]
-            st.rerun()
-
-    # ── Appearance Toolbar ─────────────────────────────────────────────────
+    if st.button("Delete this frame", disabled=frame_idx not in document["frames"], use_container_width=True):
+        change_frame(document, frame_idx, None)
+        st.rerun()
     st.markdown("---")
     st.markdown("**Appearance Toolbar**")
-    t_col1, t_col2 = st.columns(2)
-    with t_col1:
-        point_size = st.number_input("Point Size", min_value=2, max_value=30, value=4, step=1)
-    with t_col2:
-        text_size = st.number_input("Label Size", min_value=6, max_value=40, value=8, step=1)
+    a, b = st.columns(2)
+    point_size = a.number_input("Point Size", min_value=2, max_value=30, value=4, step=1)
+    text_size = b.number_input("Label Size", min_value=6, max_value=40, value=8, step=1)
 
-
-with col2:
-    if not selected_image:
-        st.info("No image selected or images folder empty.")
-        st.stop()
-
-    # ── Image ──────────────────────────────────────────────────────────────
+with image_column:
     try:
-        with Image.open(selected_image) as source_image:
-            pil_img = source_image.convert("RGB")
-    except (OSError, ValueError) as exc:
-        st.error(f"Unable to open image: {exc}")
+        pil_img = read_video_frame(state.video_editor_active, frame_idx)
+    except ValueError as exc:
+        st.error(str(exc))
         st.stop()
-    orig_w, orig_h = pil_img.width, pil_img.height
-
+    orig_w, orig_h = pil_img.size
     scale = min(1.0, MAX_W / orig_w)
-    display_w = int(orig_w * scale)
-    display_h = int(orig_h * scale)
-    scale_x   = display_w / orig_w
-    scale_y   = display_h / orig_h
-
-    display_img = (
-        pil_img.resize((display_w, display_h), Image.LANCZOS)
-        if scale < 1.0 else pil_img
+    display_w, display_h = int(orig_w * scale), int(orig_h * scale)
+    scale_x, scale_y = display_w / orig_w, display_h / orig_h
+    display_img = pil_img.resize((display_w, display_h), Image.Resampling.LANCZOS)
+    labels = document["frames"].get(frame_idx, {})
+    points = labels_to_points(labels, scale_x, scale_y)
+    frame_id = hashlib.sha256(f"{state.video_editor_active}:{frame_idx}".encode()).hexdigest()
+    value = _canvas_component(
+        img_src=f"data:image/jpeg;base64,{pil_to_base64(display_img)}",
+        display_w=display_w, display_h=display_h, schema=KEYPOINT_SCHEMA,
+        points=points, point_size=point_size, text_size=text_size,
+        frame_idx=frame_idx, frame_count=frame_count, label_indices=indices,
+        can_reset=document["frames"].get(frame_idx) != document["saved"].get(frame_idx),
+        key=f"video_canvas_{frame_id}", default=None,
     )
-    img_b64 = pil_to_base64(display_img)
-    img_src = f"data:image/jpeg;base64,{img_b64}"
-
-    # ── Labels ─────────────────────────────────────────────────────────────
-    labels_data      = load_labels(label_choice)
-    frame_map        = frame_list_to_map(labels_data)
-    labels_for_frame = frame_map.get(int(frame_idx), {})
-
-    sess_key = f"pts_{frame_idx}_{selected_image}"
-    hist_key = f"hist_{frame_idx}_{selected_image}"   # undo/redo stack key
-    hptr_key = f"hptr_{frame_idx}_{selected_image}"   # pointer into stack
-
-    # ── History helpers ─────────────────────────────────────────────────────
-
-    def _init_history(initial_points: List[Dict]):
-        """Seed the stack with the loaded state."""
-        st.session_state[hist_key] = [copy.deepcopy(initial_points)]
-        st.session_state[hptr_key] = 0
-
-    def push_history(new_points: List[Dict]):
-        """
-        Append a snapshot after a mutating action.
-        Truncates any redo-future, updates the live pointer.
-        """
-        stack = st.session_state.get(hist_key, [])
-        ptr   = st.session_state.get(hptr_key, 0)
-        # drop any states that were ahead of the pointer (redo-branch)
-        stack = stack[: ptr + 1]
-        stack.append(copy.deepcopy(new_points))
-        st.session_state[hist_key] = stack
-        st.session_state[hptr_key] = len(stack) - 1
-
-    def current_from_history() -> List[Dict]:
-        stack = st.session_state.get(hist_key, [])
-        ptr   = st.session_state.get(hptr_key, 0)
-        return copy.deepcopy(stack[ptr]) if stack else []
-
-    # ── Bootstrap session for this frame ────────────────────────────────────
-    if sess_key not in st.session_state:
-        initial = labels_to_points(labels_for_frame, scale_x=scale_x, scale_y=scale_y)
-        st.session_state[sess_key] = initial
-        _init_history(initial)
-    elif hist_key not in st.session_state:
-        # History wiped (e.g. hot-reload) but live state survives — re-seed.
-        _init_history(st.session_state[sess_key])
-
-    current_points: List[Dict] = st.session_state[sess_key]
-
-    # ── Render component — 
-    component_value = _canvas_component(
-        # runtime data — received by JS via streamlit:render args
-        img_src    = img_src,
-        display_w  = display_w,
-        display_h  = display_h,
-        points     = current_points,   # display-space
-        point_size = point_size,       # dynamic node sizing
-        text_size  = text_size,        # dynamic text sizing
-        # widget identity — changing this forces a fresh iframe
-        key        = f"canvas_{sess_key}",
-        default    = None,
-        height     = display_h + 24,
-    )
-
-    # ── Merge returned positions into session_state ─────────────────────────
-    if (
-        isinstance(component_value, list)
-        and len(component_value) == len(current_points)
-    ):
-        changed = False
-        for i, pos in enumerate(component_value):
-            new_x = float(pos.get("x", current_points[i]["x"]))
-            new_y = float(pos.get("y", current_points[i]["y"]))
-            if new_x != current_points[i]["x"] or new_y != current_points[i]["y"]:
-                current_points[i]["x"] = new_x
-                current_points[i]["y"] = new_y
-                changed = True
-
-        if changed:
-            st.session_state[sess_key] = current_points
-            push_history(current_points)  # drag is an undoable action
-            st.rerun()
-
-    # ── Undo / Redo bar (below canvas) ─────────────────────────────────────
-    st.markdown("---")
-    stack = st.session_state.get(hist_key, [])
-    ptr   = st.session_state.get(hptr_key, 0)
-
-    undo_col, redo_col = st.columns([1, 1])
-    with undo_col:
-        if st.button("↩ Undo", key=f"undo_{sess_key}", disabled=(ptr <= 0)):
-            ptr -= 1
-            st.session_state[hptr_key] = ptr
-            st.session_state[sess_key] = current_from_history()
-            st.rerun()
-    with redo_col:
-        if st.button("↪ Redo", key=f"redo_{sess_key}", disabled=(ptr >= len(stack) - 1)):
-            ptr += 1
-            st.session_state[hptr_key] = ptr
-            st.session_state[sess_key] = current_from_history()
-            st.rerun()
-
-    # ── Add keypoint (constrained to the fixed schema) ──────────────────────
-    st.markdown("---")
-    used_labels       = {p["label"] for p in current_points}
-    missing_keypoints = [k for k in KEYPOINT_SCHEMA if k not in used_labels]
-
-    add_col1, add_col2 = st.columns([3, 1])
-    with add_col1:
-        kp_to_add = st.selectbox(
-            "Add keypoint",
-            missing_keypoints,
-            key=f"add_select_{sess_key}",
-            label_visibility="collapsed",
-            placeholder=(
-                "All keypoints already labeled"
-                if not missing_keypoints
-                else "Choose a keypoint to add"
-            ),
-            index=None if missing_keypoints else None,
-        ) if missing_keypoints else None
-    with add_col2:
-        add_clicked = st.button(
-            "Add point",
-            key=f"add_btn_{sess_key}",
-            disabled=not missing_keypoints or not kp_to_add,
-        )
-
-    if add_clicked and kp_to_add:
-        new_pts = current_points + [{
-            "label": kp_to_add,
-            "x": display_w / 2.0,
-            "y": display_h / 2.0,
-        }]
-        push_history(new_pts)
-        st.session_state[sess_key] = new_pts
-        st.rerun()
-
-    # ── Point table ────────────────────────────────────────────────────────
-    st.markdown("---")
-    st.write("**Point positions** — drag on canvas to reposition, rename below.")
-
-    deleted_label = None   # will hold the label name to delete, if any
-    for pt in current_points:
-        lbl  = pt["label"]
-        cols = st.columns([2, 3, 1])
-
-        with cols[0]:
-            new_label = st.text_input(
-                "Label",
-                value=lbl,
-                key=f"lbl_{sess_key}_{lbl}",
-                label_visibility="collapsed",
-            )
-            if new_label != lbl:
-                if not new_label.strip() or new_label in used_labels:
-                    st.error("Enter a nonempty, unique keypoint label.")
-                    continue
-                updated_pts = [
-                    {**p, "label": new_label} if p["label"] == lbl else p
-                    for p in current_points
-                ]
-                push_history(updated_pts)
-                st.session_state[sess_key] = updated_pts
+    event_key = f"video_event_{frame_id}"
+    if isinstance(value, dict) and value.get("event_id") != state.get(event_key):
+        state[event_key] = value.get("event_id")
+        if value.get("action") == "navigate":
+            target = value.get("frame_idx")
+            if isinstance(target, int) and 0 <= target < frame_count:
+                state.video_editor_frame_update = target
                 st.rerun()
-
-        with cols[1]:
-            st.caption(f"x={int(pt['x'] / scale_x)}  y={int(pt['y'] / scale_y)}")
-
-        with cols[2]:
-            if st.button("Delete", key=f"del_{sess_key}_{lbl}", help=f"Delete {lbl}"):
-                deleted_label = lbl
-
-    if deleted_label is not None:
-        new_pts = [p for p in current_points if p["label"] != deleted_label]
-        push_history(new_pts)
-        st.session_state[sess_key] = new_pts
-        st.rerun()
-
-    # ── Save ───────────────────────────────────────────────────────────────
-    st.markdown("---")
-    if st.button("Save labels"):
-        for key, val in list(st.session_state.items()):
-            if not key.startswith("pts_"):
-                continue
-            parts = key.split("_", 2)
-            if len(parts) < 3:
-                continue
+        elif value.get("action") == "reset":
+            change_frame(document, frame_idx, copy.deepcopy(document["saved"].get(frame_idx)))
+            st.rerun()
+        elif isinstance(value.get("points"), list):
+            incoming = value["points"]
+            allowed = set(KEYPOINT_SCHEMA) | set(labels)
             try:
-                fidx = int(parts[1])
-            except ValueError:
-                continue
-
-            frame_image_path = parts[2]
-            try:
-                f_scale_x, f_scale_y = compute_scale_for_image(frame_image_path, MAX_W)
-            except Exception:
-                f_scale_x, f_scale_y = scale_x, scale_y  # fallback
-
-            frame_map[fidx] = {
-                pt["label"] or f"pt_{i}": [
-                    1,
-                    int(pt["x"] / f_scale_x),
-                    int(pt["y"] / f_scale_y),
-                ]
-                for i, pt in enumerate(val)
-            }
-
-        out_list    = map_to_frame_list(frame_map)
-        output_path = get_output_label_path(
-            label_choice, output_labels_dir, output_name_suffix
-        )
-
-        existing = []
-        if Path(output_path).exists():
-            with open(output_path) as fh:
-                existing = json.load(fh)
-
-        if existing == out_list:
-            st.info(f"No changes detected — {output_path} not modified.")
+                valid = (len({p["label"] for p in incoming}) == len(incoming)
+                         and all(p["label"] in allowed and math.isfinite(p["x"]) and math.isfinite(p["y"])
+                                 and 0 <= p["x"] <= display_w and 0 <= p["y"] <= display_h for p in incoming))
+                if valid:
+                    # Preserve invisible annotations and exact original coordinates
+                    # for points that did not move during this gesture.
+                    updated = {k: copy.deepcopy(v) for k, v in labels.items() if k not in {p["label"] for p in points}}
+                    existing = {p["label"]: p for p in points}
+                    for p in incoming:
+                        old = existing.get(p["label"])
+                        if old and old["x"] == p["x"] and old["y"] == p["y"]:
+                            updated[p["label"]] = copy.deepcopy(labels[p["label"]])
+                        else:
+                            updated[p["label"]] = [
+                                1,
+                                min(orig_w - 1, max(0, round(p["x"] / scale_x))),
+                                min(orig_h - 1, max(0, round(p["y"] / scale_y))),
+                            ]
+                    if updated or frame_idx in document["frames"]:
+                        change_frame(document, frame_idx, updated)
+                        st.rerun()
+            except (KeyError, TypeError, ValueError):
+                st.error("Invalid keypoint update; please try again.")
+    history = document["history"].get(frame_idx, {"states": [], "position": 0})
+    undo, redo = st.columns(2)
+    direction = 0
+    if undo.button("↩ Undo", disabled=history["position"] <= 0):
+        direction = -1
+    if redo.button("↪ Redo", disabled=history["position"] >= len(history["states"]) - 1):
+        direction = 1
+    if direction:
+        history["position"] += direction
+        snapshot = copy.deepcopy(history["states"][history["position"]])
+        if snapshot is None:
+            document["frames"].pop(frame_idx, None)
         else:
-            save_labels(output_path, out_list)
-            # FClear cache so newly created/saved file registers in the selector instantly
-            list_json_label_files.clear()
-            st.success(f"Saved labels to {output_path}")
-# %%
+            document["frames"][frame_idx] = snapshot
+        st.rerun()
