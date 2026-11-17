@@ -1,9 +1,5 @@
 [
   {
-    "frame_idx": 65,
-    "labels": {}
-  },
-  {
     "frame_idx": 100,
     "labels": {
       "R_hip": [
@@ -37,54 +33,6 @@
         411
       ]
     }
-  },
-  {
-    "frame_idx": 145,
-    "labels": {}
-  },
-  {
-    "frame_idx": 218,
-    "labels": {}
-  },
-  {
-    "frame_idx": 290,
-    "labels": {}
-  },
-  {
-    "frame_idx": 363,
-    "labels": {}
-  },
-  {
-    "frame_idx": 365,
-    "labels": {}
-  },
-  {
-    "frame_idx": 436,
-    "labels": {}
-  },
-  {
-    "frame_idx": 489,
-    "labels": {}
-  },
-  {
-    "frame_idx": 508,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1162,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1234,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1307,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1506,
-    "labels": {}
   },
   {
     "frame_idx": 2101,
@@ -132,10 +80,6 @@
     }
   },
   {
-    "frame_idx": 2140,
-    "labels": {}
-  },
-  {
     "frame_idx": 3184,
     "labels": {
       "R_backpaw": [
@@ -181,10 +125,6 @@
     }
   },
   {
-    "frame_idx": 3267,
-    "labels": {}
-  },
-  {
     "frame_idx": 3304,
     "labels": {
       "R_hip": [
@@ -218,94 +158,6 @@
         714
       ]
     }
-  },
-  {
-    "frame_idx": 3848,
-    "labels": {}
-  },
-  {
-    "frame_idx": 3920,
-    "labels": {}
-  },
-  {
-    "frame_idx": 3993,
-    "labels": {}
-  },
-  {
-    "frame_idx": 4219,
-    "labels": {}
-  },
-  {
-    "frame_idx": 5472,
-    "labels": {}
-  },
-  {
-    "frame_idx": 5735,
-    "labels": {}
-  },
-  {
-    "frame_idx": 5890,
-    "labels": {}
-  },
-  {
-    "frame_idx": 7477,
-    "labels": {}
-  },
-  {
-    "frame_idx": 7550,
-    "labels": {}
-  },
-  {
-    "frame_idx": 8036,
-    "labels": {}
-  },
-  {
-    "frame_idx": 8131,
-    "labels": {}
-  },
-  {
-    "frame_idx": 8738,
-    "labels": {}
-  },
-  {
-    "frame_idx": 8784,
-    "labels": {}
-  },
-  {
-    "frame_idx": 8929,
-    "labels": {}
-  },
-  {
-    "frame_idx": 9728,
-    "labels": {}
-  },
-  {
-    "frame_idx": 10309,
-    "labels": {}
-  },
-  {
-    "frame_idx": 10962,
-    "labels": {}
-  },
-  {
-    "frame_idx": 11035,
-    "labels": {}
-  },
-  {
-    "frame_idx": 11107,
-    "labels": {}
-  },
-  {
-    "frame_idx": 11180,
-    "labels": {}
-  },
-  {
-    "frame_idx": 11833,
-    "labels": {}
-  },
-  {
-    "frame_idx": 11906,
-    "labels": {}
   },
   {
     "frame_idx": 12129,
@@ -353,10 +205,6 @@
     }
   },
   {
-    "frame_idx": 12341,
-    "labels": {}
-  },
-  {
     "frame_idx": 12493,
     "labels": {
       "R_hip": [
@@ -397,10 +245,6 @@
     }
   },
   {
-    "frame_idx": 13576,
-    "labels": {}
-  },
-  {
     "frame_idx": 13592,
     "labels": {
       "R_backpaw": [
@@ -434,26 +278,6 @@
         419
       ]
     }
-  },
-  {
-    "frame_idx": 13866,
-    "labels": {}
-  },
-  {
-    "frame_idx": 14447,
-    "labels": {}
-  },
-  {
-    "frame_idx": 15245,
-    "labels": {}
-  },
-  {
-    "frame_idx": 15390,
-    "labels": {}
-  },
-  {
-    "frame_idx": 16116,
-    "labels": {}
   },
   {
     "frame_idx": 16820,
@@ -511,18 +335,6 @@
     }
   },
   {
-    "frame_idx": 17859,
-    "labels": {}
-  },
-  {
-    "frame_idx": 18004,
-    "labels": {}
-  },
-  {
-    "frame_idx": 19020,
-    "labels": {}
-  },
-  {
     "frame_idx": 19112,
     "labels": {
       "R_hip": [
@@ -561,63 +373,6 @@
         597
       ]
     }
-  },
-  {
-    "frame_idx": 19311,
-    "labels": {}
-  },
-  {
-    "frame_idx": 21416,
-    "labels": {}
-  },
-  {
-    "frame_idx": 22072,
-    "labels": {
-      "R_hip": [
-        1,
-        615,
-        396
-      ],
-      "head": [
-        1,
-        722,
-        395
-      ],
-      "spine1": [
-        1,
-        686,
-        358
-      ],
-      "spine2": [
-        1,
-        576,
-        314
-      ],
-      "spine3": [
-        1,
-        506,
-        385
-      ],
-      "tail1": [
-        1,
-        594,
-        557
-      ],
-      "tail2": [
-        1,
-        702,
-        569
-      ],
-      "tailbase": [
-        1,
-        492,
-        499
-      ]
-    }
-  },
-  {
-    "frame_idx": 22578,
-    "labels": {}
   },
   {
     "frame_idx": 23460,
@@ -677,18 +432,6 @@
         586
       ]
     }
-  },
-  {
-    "frame_idx": 23812,
-    "labels": {}
-  },
-  {
-    "frame_idx": 24465,
-    "labels": {}
-  },
-  {
-    "frame_idx": 24538,
-    "labels": {}
   },
   {
     "frame_idx": 24597,
@@ -756,10 +499,6 @@
     }
   },
   {
-    "frame_idx": 27006,
-    "labels": {}
-  },
-  {
     "frame_idx": 27187,
     "labels": {
       "spine1": [
@@ -793,10 +532,6 @@
         553
       ]
     }
-  },
-  {
-    "frame_idx": 27587,
-    "labels": {}
   },
   {
     "frame_idx": 27915,
@@ -837,22 +572,6 @@
         603
       ]
     }
-  },
-  {
-    "frame_idx": 27950,
-    "labels": {}
-  },
-  {
-    "frame_idx": 28022,
-    "labels": {}
-  },
-  {
-    "frame_idx": 28095,
-    "labels": {}
-  },
-  {
-    "frame_idx": 28168,
-    "labels": {}
   },
   {
     "frame_idx": 28195,
@@ -917,14 +636,6 @@
         688
       ]
     }
-  },
-  {
-    "frame_idx": 28240,
-    "labels": {}
-  },
-  {
-    "frame_idx": 28530,
-    "labels": {}
   },
   {
     "frame_idx": 28544,
@@ -1769,10 +1480,6 @@
     }
   },
   {
-    "frame_idx": 29692,
-    "labels": {}
-  },
-  {
     "frame_idx": 29794,
     "labels": {
       "R_frontpaw": [
@@ -2325,23 +2032,11 @@
     "labels": {}
   },
   {
-    "frame_idx": 30708,
-    "labels": {}
-  },
-  {
-    "frame_idx": 30926,
-    "labels": {}
-  },
-  {
     "frame_idx": 31126,
     "labels": {}
   },
   {
     "frame_idx": 31161,
-    "labels": {}
-  },
-  {
-    "frame_idx": 31217,
     "labels": {}
   },
   {

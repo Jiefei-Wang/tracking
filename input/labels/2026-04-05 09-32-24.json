@@ -1,125 +1,5 @@
 [
   {
-    "frame_idx": 16,
-    "labels": {}
-  },
-  {
-    "frame_idx": 18,
-    "labels": {}
-  },
-  {
-    "frame_idx": 34,
-    "labels": {}
-  },
-  {
-    "frame_idx": 45,
-    "labels": {}
-  },
-  {
-    "frame_idx": 54,
-    "labels": {}
-  },
-  {
-    "frame_idx": 64,
-    "labels": {}
-  },
-  {
-    "frame_idx": 68,
-    "labels": {}
-  },
-  {
-    "frame_idx": 73,
-    "labels": {}
-  },
-  {
-    "frame_idx": 79,
-    "labels": {}
-  },
-  {
-    "frame_idx": 80,
-    "labels": {}
-  },
-  {
-    "frame_idx": 89,
-    "labels": {}
-  },
-  {
-    "frame_idx": 135,
-    "labels": {}
-  },
-  {
-    "frame_idx": 202,
-    "labels": {}
-  },
-  {
-    "frame_idx": 210,
-    "labels": {}
-  },
-  {
-    "frame_idx": 233,
-    "labels": {}
-  },
-  {
-    "frame_idx": 246,
-    "labels": {}
-  },
-  {
-    "frame_idx": 257,
-    "labels": {}
-  },
-  {
-    "frame_idx": 283,
-    "labels": {}
-  },
-  {
-    "frame_idx": 328,
-    "labels": {}
-  },
-  {
-    "frame_idx": 337,
-    "labels": {}
-  },
-  {
-    "frame_idx": 374,
-    "labels": {}
-  },
-  {
-    "frame_idx": 383,
-    "labels": {}
-  },
-  {
-    "frame_idx": 392,
-    "labels": {}
-  },
-  {
-    "frame_idx": 396,
-    "labels": {}
-  },
-  {
-    "frame_idx": 463,
-    "labels": {}
-  },
-  {
-    "frame_idx": 673,
-    "labels": {}
-  },
-  {
-    "frame_idx": 684,
-    "labels": {}
-  },
-  {
-    "frame_idx": 790,
-    "labels": {}
-  },
-  {
-    "frame_idx": 812,
-    "labels": {}
-  },
-  {
-    "frame_idx": 836,
-    "labels": {}
-  },
-  {
     "frame_idx": 873,
     "labels": {
       "tail_tip": [
@@ -153,10 +33,6 @@
         459.0
       ]
     }
-  },
-  {
-    "frame_idx": 886,
-    "labels": {}
   },
   {
     "frame_idx": 905,
@@ -194,18 +70,6 @@
     }
   },
   {
-    "frame_idx": 914,
-    "labels": {}
-  },
-  {
-    "frame_idx": 917,
-    "labels": {}
-  },
-  {
-    "frame_idx": 921,
-    "labels": {}
-  },
-  {
     "frame_idx": 936,
     "labels": {
       "head": [
@@ -239,10 +103,6 @@
         526.0
       ]
     }
-  },
-  {
-    "frame_idx": 943,
-    "labels": {}
   },
   {
     "frame_idx": 967,
@@ -308,26 +168,6 @@
         29.0
       ]
     }
-  },
-  {
-    "frame_idx": 972,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1006,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1058,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1068,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1095,
-    "labels": {}
   },
   {
     "frame_idx": 1185,
@@ -520,22 +360,6 @@
     }
   },
   {
-    "frame_idx": 1284,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1356,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1513,
-    "labels": {}
-  },
-  {
-    "frame_idx": 1553,
-    "labels": {}
-  },
-  {
     "frame_idx": 1778,
     "labels": {
       "head": [
@@ -656,18 +480,6 @@
     }
   },
   {
-    "frame_idx": 2026,
-    "labels": {}
-  },
-  {
-    "frame_idx": 2078,
-    "labels": {}
-  },
-  {
-    "frame_idx": 2208,
-    "labels": {}
-  },
-  {
     "frame_idx": 2215,
     "labels": {
       "head": [
@@ -743,10 +555,6 @@
     }
   },
   {
-    "frame_idx": 2254,
-    "labels": {}
-  },
-  {
     "frame_idx": 2340,
     "labels": {
       "spine2": [
@@ -780,18 +588,6 @@
         594.0
       ]
     }
-  },
-  {
-    "frame_idx": 2382,
-    "labels": {}
-  },
-  {
-    "frame_idx": 2412,
-    "labels": {}
-  },
-  {
-    "frame_idx": 2437,
-    "labels": {}
   },
   {
     "frame_idx": 2496,
@@ -844,14 +640,6 @@
     }
   },
   {
-    "frame_idx": 2506,
-    "labels": {}
-  },
-  {
-    "frame_idx": 2509,
-    "labels": {}
-  },
-  {
     "frame_idx": 2527,
     "labels": {
       "spine2": [
@@ -885,10 +673,6 @@
         313.0
       ]
     }
-  },
-  {
-    "frame_idx": 2574,
-    "labels": {}
   },
   {
     "frame_idx": 2590,
@@ -1066,10 +850,6 @@
     }
   },
   {
-    "frame_idx": 2709,
-    "labels": {}
-  },
-  {
     "frame_idx": 2871,
     "labels": {
       "spine3": [
@@ -1093,10 +873,6 @@
         685.0
       ]
     }
-  },
-  {
-    "frame_idx": 2890,
-    "labels": {}
   },
   {
     "frame_idx": 3588,
@@ -1419,10 +1195,6 @@
     }
   },
   {
-    "frame_idx": 4672,
-    "labels": {}
-  },
-  {
     "frame_idx": 4836,
     "labels": {
       "head": [
@@ -1451,10 +1223,6 @@
         658.0
       ]
     }
-  },
-  {
-    "frame_idx": 4909,
-    "labels": {}
   },
   {
     "frame_idx": 5024,
@@ -1826,10 +1594,6 @@
     "labels": {}
   },
   {
-    "frame_idx": 5913,
-    "labels": {}
-  },
-  {
     "frame_idx": 5960,
     "labels": {
       "spine1": [
@@ -1898,10 +1662,6 @@
         76.0
       ]
     }
-  },
-  {
-    "frame_idx": 6092,
-    "labels": {}
   },
   {
     "frame_idx": 6272,
@@ -3154,14 +2914,6 @@
     }
   },
   {
-    "frame_idx": 13814,
-    "labels": {}
-  },
-  {
-    "frame_idx": 13936,
-    "labels": {}
-  },
-  {
     "frame_idx": 14634,
     "labels": {
       "head": [
@@ -3200,10 +2952,6 @@
         552.0
       ]
     }
-  },
-  {
-    "frame_idx": 14966,
-    "labels": {}
   },
   {
     "frame_idx": 15040,
@@ -3366,10 +3114,6 @@
     }
   },
   {
-    "frame_idx": 15837,
-    "labels": {}
-  },
-  {
     "frame_idx": 15883,
     "labels": {
       "head": [
@@ -3418,14 +3162,6 @@
         476.0
       ]
     }
-  },
-  {
-    "frame_idx": 15899,
-    "labels": {}
-  },
-  {
-    "frame_idx": 15916,
-    "labels": {}
   },
   {
     "frame_idx": 17193,
@@ -3906,10 +3642,6 @@
         532.0
       ]
     }
-  },
-  {
-    "frame_idx": 19117,
-    "labels": {}
   },
   {
     "frame_idx": 19440,
@@ -4432,18 +4164,6 @@
     }
   },
   {
-    "frame_idx": 20350,
-    "labels": {}
-  },
-  {
-    "frame_idx": 20395,
-    "labels": {}
-  },
-  {
-    "frame_idx": 20635,
-    "labels": {}
-  },
-  {
     "frame_idx": 21094,
     "labels": {
       "head": [
@@ -4944,10 +4664,6 @@
     }
   },
   {
-    "frame_idx": 22092,
-    "labels": {}
-  },
-  {
     "frame_idx": 22217,
     "labels": {
       "nose": [
@@ -4986,10 +4702,6 @@
         395.0
       ]
     }
-  },
-  {
-    "frame_idx": 22726,
-    "labels": {}
   },
   {
     "frame_idx": 22779,
@@ -5042,14 +4754,6 @@
     }
   },
   {
-    "frame_idx": 22955,
-    "labels": {}
-  },
-  {
-    "frame_idx": 23144,
-    "labels": {}
-  },
-  {
     "frame_idx": 24058,
     "labels": {
       "head": [
@@ -5083,10 +4787,6 @@
         515.0
       ]
     }
-  },
-  {
-    "frame_idx": 24151,
-    "labels": {}
   },
   {
     "frame_idx": 24807,
@@ -5192,10 +4892,6 @@
         492.0
       ]
     }
-  },
-  {
-    "frame_idx": 25101,
-    "labels": {}
   },
   {
     "frame_idx": 25119,

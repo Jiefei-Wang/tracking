@@ -285,10 +285,6 @@
     }
   },
   {
-    "frame_idx": 79,
-    "labels": {}
-  },
-  {
     "frame_idx": 80,
     "labels": {
       "spine2": [
@@ -587,10 +583,6 @@
     "labels": {}
   },
   {
-    "frame_idx": 396,
-    "labels": {}
-  },
-  {
     "frame_idx": 463,
     "labels": {
       "R_backpaw": [
@@ -694,10 +686,6 @@
         606.0
       ]
     }
-  },
-  {
-    "frame_idx": 790,
-    "labels": {}
   },
   {
     "frame_idx": 812,
@@ -1435,10 +1423,6 @@
     }
   },
   {
-    "frame_idx": 1553,
-    "labels": {}
-  },
-  {
     "frame_idx": 2026,
     "labels": {
       "spine1": [
@@ -1804,10 +1788,6 @@
     }
   },
   {
-    "frame_idx": 2454,
-    "labels": {}
-  },
-  {
     "frame_idx": 2506,
     "labels": {
       "L_frontpaw": [
@@ -2103,10 +2083,6 @@
     }
   },
   {
-    "frame_idx": 4672,
-    "labels": {}
-  },
-  {
     "frame_idx": 5913,
     "labels": {
       "head": [
@@ -2220,9 +2196,5 @@
         529.0
       ]
     }
-  },
-  {
-    "frame_idx": 6679,
-    "labels": {}
   }
 ]
