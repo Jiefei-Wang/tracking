@@ -588,7 +588,7 @@ def confirm_video_switch(target):
 
 left, image_column = st.columns([1, 4])
 with left:
-    selected = st.selectbox("Video name", videos, format_func=lambda v: Path(v).stem, key="video_editor_choice")
+    selected = st.selectbox(f"Video name (total json frames: {len(state.video_editor_document['frames'])})", videos, format_func=lambda v: Path(v).stem, key="video_editor_choice")
     if selected != state.video_editor_active:
         if state.video_editor_document["frames"] != state.video_editor_document["saved"]:
             confirm_video_switch(selected)
@@ -611,10 +611,7 @@ with left:
         json_indices.index(state.video_editor_frame) + 1
         if state.video_editor_frame in document["frames"] else "—"
     )
-    frame_index_label = (
-        f"Frame index (total in json: {len(json_indices)}, "
-        f"current json index: {current_json_index})"
-    )
+    frame_index_label = f"Frame index (json index: {current_json_index})"
     frame_idx = int(st.number_input(frame_index_label, min_value=0, max_value=frame_count - 1,
                                    step=1, key="video_editor_frame"))
     state.video_editor_position = frame_idx
@@ -627,6 +624,16 @@ with left:
         st.rerun()
     if next_col.button("Next ▶", disabled=not following, use_container_width=True):
         state.video_editor_frame_update = following[0]
+        st.rerun()
+    unlabeled_indices = [i for i in indices if not document["frames"][i]]
+    previous_unlabeled = [i for i in unlabeled_indices if i < frame_idx]
+    next_unlabeled = [i for i in unlabeled_indices if i > frame_idx]
+    prev_empty_col, next_empty_col = st.columns(2)
+    if prev_empty_col.button("Previous unlabeled", disabled=not previous_unlabeled, use_container_width=True):
+        state.video_editor_frame_update = previous_unlabeled[-1]
+        st.rerun()
+    if next_empty_col.button("Next unlabeled", disabled=not next_unlabeled, use_container_width=True):
+        state.video_editor_frame_update = next_unlabeled[0]
         st.rerun()
     if st.button("Save", type="primary", disabled=document["frames"] == document["saved"], use_container_width=True):
         try:

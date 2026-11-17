@@ -116,7 +116,7 @@ window.addEventListener("message", function(e) {
 // Step 3: send display-space coords back to Python
 function sendPositions() {
   var out = points.map(function(p) {
-    return { label: p.label, x: Math.round(p.x), y: Math.round(p.y) };
+    return { label: p.label, x: p.x, y: p.y };
   });
   window.parent.postMessage({ 
     isStreamlitMessage: true, 
