@@ -21,6 +21,7 @@
     #ticks span { position: absolute; width: 2px; height: 8px; background: #ffd60a; }
     #frame-caption { color: #eee; font: 12px sans-serif; margin-top: 5px; }
     #status {
+        pointer-events: none;
         position: absolute; top: 8px; left: 8px;
         color: #a0c4ff; font-size: 12px;
         padding: 4px 8px; background: #12122a; min-height: 20px; border-radius: 4px;
@@ -29,7 +30,7 @@
 </head>
 <body>
 <div id="image-area"><div id="status">Loading…</div><canvas id="c"></canvas><input id="timeline" type="range" min="0" step="1" aria-label="Video frame"><div id="ticks"></div><div id="frame-caption"></div></div>
-<aside id="panel"><strong>Keypoints</strong><p>Drag a keypoint onto the image to add it.</p><div id="palette"></div><div id="trash">Drag a point here to delete</div><button id="reset" disabled>Reset current frame</button></aside>
+<aside id="panel"><strong>Keypoints</strong><p>Drag a keypoint onto the image to add it.</p><p>Scroll over the image to zoom. Drag the zoomed image to pan; keypoints take priority.</p><div id="palette"></div><div id="trash">Drag a point here to delete</div><button id="reset" disabled>Reset current frame</button></aside>
 <script>
 var POINT_R = 7;
 var TEXT_SIZE = 11;
@@ -51,6 +52,19 @@ var hoveredIdx = -1;
 var DISPLAY_W  = 0;
 var DISPLAY_H  = 0;
 var img        = new Image();
+// View-only transform: points always remain in unzoomed display coordinates.
+var zoom = 1, panX = 0, panY = 0;
+var viewFrame = null;
+
+function clampPan() {
+  panX = Math.max(DISPLAY_W * (1 - zoom), Math.min(0, panX));
+  panY = Math.max(DISPLAY_H * (1 - zoom), Math.min(0, panY));
+}
+function toView(p) { return {x:p.x * zoom + panX, y:p.y * zoom + panY}; }
+function toImage(p) { return {x:(p.x - panX) / zoom, y:(p.y - panY) / zoom}; }
+function updateCursor() {
+  canvas.style.cursor = drag ? "grabbing" : hoveredIdx >= 0 || zoom > 1 ? "grab" : "default";
+}
 
 img.onload = function() { draw(); };
 
@@ -80,6 +94,14 @@ window.addEventListener("message", function(e) {
     tick.title = "Labeled frame " + index;
     ticks.appendChild(tick);
   });
+  var nextFrame = args.frame_id || args.frame_idx;
+  if (viewFrame !== nextFrame || DISPLAY_W !== args.display_w || DISPLAY_H !== args.display_h) {
+    zoom = 1;
+    panX = panY = 0;
+    drag = null;
+    hoveredIdx = -1;
+    viewFrame = nextFrame;
+  }
   schema = args.schema || [];
   DISPLAY_W = args.display_w;
   DISPLAY_H = args.display_h;
@@ -108,7 +130,8 @@ window.addEventListener("message", function(e) {
     draw();
   }
 
-  status.textContent = "Drag points to move or delete";
+  status.textContent = "Scroll to zoom · Drag points to edit";
+  updateCursor();
   renderPalette();
   window.parent.postMessage({isStreamlitMessage:true, type:"streamlit:setFrameHeight", height:Math.max(canvas.getBoundingClientRect().height + 85, document.getElementById("panel").scrollHeight + 20)}, "*");
 });
@@ -140,7 +163,8 @@ document.getElementById("timeline").addEventListener("change", function(e) {
 // ── Hit test ──────────────────────────────────────────────────────────────
 function pointAt(cx, cy) {
   for (var i = points.length - 1; i >= 0; i--) {
-    var dx = cx - points[i].x, dy = cy - points[i].y;
+    var p = toView(points[i]);
+    var dx = cx - p.x, dy = cy - p.y;
     if (Math.sqrt(dx*dx + dy*dy) <= POINT_R + 3) return i;
   }
   return -1;
@@ -151,10 +175,11 @@ function draw() {
   if (!DISPLAY_W || !DISPLAY_H) return;
   ctx.clearRect(0, 0, DISPLAY_W, DISPLAY_H);
   if (img.complete && img.naturalWidth) {
-    ctx.drawImage(img, 0, 0, DISPLAY_W, DISPLAY_H);
+    ctx.drawImage(img, panX, panY, DISPLAY_W * zoom, DISPLAY_H * zoom);
   }
 
-  points.forEach(function(p, i) {
+  points.forEach(function(point, i) {
+    var p = Object.assign({}, point, toView(point));
     var r = (i === hoveredIdx || (drag && drag.idx === i)) ? POINT_R + 3 : POINT_R;
 
     ctx.save();
@@ -195,6 +220,7 @@ function renderPalette() {
     item.className = "keypoint";
     item.textContent = label;
     item.addEventListener("pointerdown", function(e) {
+      if (e.button !== 0) return;
       e.preventDefault();
       drag = {label: label};
       item.setPointerCapture(e.pointerId);
@@ -211,20 +237,46 @@ function inside(e, element) {
   var r = element.getBoundingClientRect();
   return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
 }
-canvas.addEventListener("pointerdown", function(e) {
-  var p = position(e), idx = pointAt(p.x, p.y);
-  if (idx < 0) return;
+canvas.addEventListener("wheel", function(e) {
   e.preventDefault();
-  drag = {idx:idx, offX:p.x-points[idx].x, offY:p.y-points[idx].y, original:{...points[idx]}};
+  if (drag) return;
+  var p = position(e), anchor = toImage(p);
+  var delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? DISPLAY_H : 1);
+  zoom = Math.max(1, Math.min(8, zoom * Math.exp(-delta * 0.002)));
+  panX = p.x - anchor.x * zoom;
+  panY = p.y - anchor.y * zoom;
+  clampPan();
+  hoveredIdx = pointAt(p.x, p.y);
+  updateCursor();
+  draw();
+}, {passive:false});
+canvas.addEventListener("pointerdown", function(e) {
+  if (e.button !== 0) return;
+  var view = position(e), p = toImage(view), idx = pointAt(view.x, view.y);
+  if (idx >= 0) {
+    drag = {idx:idx, offX:p.x-points[idx].x, offY:p.y-points[idx].y, original:{...points[idx]}};
+  } else if (zoom > 1) {
+    drag = {pan:true, startX:view.x, startY:view.y, panX:panX, panY:panY};
+  } else {
+    return;
+  }
+  e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
+  updateCursor();
 });
 window.addEventListener("pointermove", function(e) {
-  var p = position(e);
+  var view = position(e), p = toImage(view);
+  if (drag && drag.pan) {
+    panX = drag.panX + view.x - drag.startX;
+    panY = drag.panY + view.y - drag.startY;
+    clampPan();
+  }
   if (drag && drag.idx !== undefined) {
     points[drag.idx].x = Math.max(0, Math.min(DISPLAY_W, p.x-drag.offX));
     points[drag.idx].y = Math.max(0, Math.min(DISPLAY_H, p.y-drag.offY));
   }
-  hoveredIdx = drag ? -1 : pointAt(p.x,p.y);
+  hoveredIdx = drag || !inside(e, canvas) ? -1 : pointAt(view.x,view.y);
+  updateCursor();
   document.getElementById("trash").classList.toggle("active", !!drag && drag.idx !== undefined && inside(e, document.getElementById("trash")));
   draw();
 });
@@ -240,12 +292,13 @@ window.addEventListener("pointerup", function(e) {
     } else {
       points[drag.idx] = drag.original;
     }
-  } else if (inside(e, canvas) && !points.some(function(p) {return p.label === drag.label;})) {
-    var p = position(e);
+  } else if (!drag.pan && inside(e, canvas) && !points.some(function(p) {return p.label === drag.label;})) {
+    var p = toImage(position(e));
     points.push({label:drag.label, x:p.x, y:p.y, color:COLORS[points.length % COLORS.length]});
     changed = true;
   }
   drag = null;
+  updateCursor();
   document.getElementById("trash").classList.remove("active");
   renderPalette();
   draw();
@@ -254,6 +307,7 @@ window.addEventListener("pointerup", function(e) {
 window.addEventListener("pointercancel", function() {
   if (drag && drag.idx !== undefined) points[drag.idx] = drag.original;
   drag = null;
+  updateCursor();
   document.getElementById("trash").classList.remove("active");
   draw();
 });
